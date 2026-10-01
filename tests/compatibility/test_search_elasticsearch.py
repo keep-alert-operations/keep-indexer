@@ -8,14 +8,8 @@ from elasticsearch import Elasticsearch
 import pytest
 
 from appchi.cel import compile_expression
-from appchi.search import (
-    Projection,
-    ProjectionWriter,
-    SearchReader,
-    SearchScope,
-    SearchState,
-    index_mapping,
-)
+from appchi.search import Projection, SearchReader, SearchScope, SearchState, index_mapping
+from appchi.search.writer import ProjectionWriter
 
 pytestmark = pytest.mark.compatibility
 

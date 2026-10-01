@@ -13,12 +13,12 @@ from pydantic import Field, field_validator
 from appchi.models import StrictModel
 from appchi.search.projection import (
     Projection,
-    ProjectionWriter,
     build_document,
     canonical,
     index_mapping,
     assert_complete,
 )
+from appchi.search.writer import ProjectionWriter
 from appchi.shared.errors import AppError, unavailable
 
 HOLD_LOCK = 713411725

@@ -18,7 +18,7 @@ from appchi.search.rebuild import (
 )
 from appchi.service_clients import elasticsearch_options
 from appchi.shared.errors import AppError
-from appchi.shared.transactions import wire
+from appchi.serialization import wire
 from appchi.worker_health import WorkerHealth
 
 

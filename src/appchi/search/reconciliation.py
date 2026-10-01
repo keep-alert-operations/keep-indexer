@@ -9,8 +9,9 @@ from collections import defaultdict
 from time import monotonic
 
 from appchi.shared.errors import unavailable
-from appchi.shared.transactions import wire
-from .projection import Projection, ProjectionWriter, build_document
+from appchi.serialization import wire
+from appchi.search.projection import Projection, build_document
+from appchi.search.writer import ProjectionWriter
 
 PAGE_SIZE = 50
 
