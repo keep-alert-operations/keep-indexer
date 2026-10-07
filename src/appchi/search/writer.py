@@ -43,27 +43,11 @@ class ProjectionWriter:
                     continue
             latest[key] = (item, document)
             expected.append((item, document))
-        operations = []
-        for item, document in latest.values():
-            operations.extend(
-                [
-                    {
-                        "index": {
-                            "_index": self.index,
-                            "_id": item.alert_id,
-                            "version": item.version,
-                            "version_type": "external_gte",
-                        }
-                    },
-                    document,
-                ]
-            )
-        if len(latest) > 1 and sum(len(canonical(x)) + 1 for x in operations) > 4 * 1024 * 1024:
-            raise AppError("projection_batch_limit", "Projection batch exceeds 4 MiB")
         try:
             # Check visible equal versions before external_gte, in addition to the
             # mandatory durable immutability guard which prevents concurrent races.
             existing = self._visible(list(latest))
+            operations = []
             for item, document in latest.values():
                 hit = existing.get(item.alert_id)
                 if hit and hit["_version"] == item.version and hit["_source"] != document:
@@ -72,16 +56,42 @@ class ProjectionWriter:
                         "Existing equal-version document differs",
                         409,
                     )
-            response = self.client.bulk(operations=operations, refresh="wait_for")
-            assert_complete(response)
-            if len(response.get("items", [])) != len(latest):
-                raise unavailable("projection_incomplete")
-            for result in response["items"]:
-                item_result = result.get("index", {})
-                assert_complete(item_result)
-                if item_result.get("status") not in {200, 201, 409}:
-                    raise unavailable("projection_failed")
-            visible = self._visible(list(latest))
+                # Search-visible identical content already proves coverage. Do
+                # not rewrite it and wait for another refresh on every scan.
+                if hit and (
+                    (hit["_version"] == item.version and hit["_source"] == document)
+                    or (hit["_version"] > item.version and covered_by_newer(item, hit["_source"]))
+                ):
+                    continue
+                operations.extend(
+                    [
+                        {
+                            "index": {
+                                "_index": self.index,
+                                "_id": item.alert_id,
+                                "version": item.version,
+                                "version_type": "external_gte",
+                            }
+                        },
+                        document,
+                    ]
+                )
+            if (
+                len(operations) > 2
+                and sum(len(canonical(x)) + 1 for x in operations) > 4 * 1024 * 1024
+            ):
+                raise AppError("projection_batch_limit", "Projection batch exceeds 4 MiB")
+            if operations:
+                response = self.client.bulk(operations=operations, refresh="wait_for")
+                assert_complete(response)
+                if len(response.get("items", [])) != len(operations) // 2:
+                    raise unavailable("projection_incomplete")
+                for result in response["items"]:
+                    item_result = result.get("index", {})
+                    assert_complete(item_result)
+                    if item_result.get("status") not in {200, 201, 409}:
+                        raise unavailable("projection_failed")
+            visible = self._visible(list(latest)) if operations else existing
             for item, document in expected:
                 hit = visible.get(item.alert_id)
                 if not hit or hit["_source"].get("tenant_id") != item.tenant_id:

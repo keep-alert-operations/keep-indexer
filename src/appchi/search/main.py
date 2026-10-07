@@ -2,8 +2,8 @@
 
 from appchi.kafka_changed import ChangedConsumer
 from appchi.pipeline_runtime import run
-from appchi.search.consumer import index_record
-from appchi.search.reconciliation import reconciliation_turn
+from appchi.search.consumer import index_record, index_batch
+from appchi.search.reconciliation import ReconciliationRunner
 
 
 def main():
@@ -15,8 +15,9 @@ def main():
             profile,
             "indexer",
             index_record,
+            batch_handler=index_batch,
         ),
-        before_turn=reconciliation_turn,
+        before_turn=ReconciliationRunner(),
         transport_optional=True,
     )
 
