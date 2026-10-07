@@ -32,7 +32,7 @@ class RebuildBinding(StrictModel):
     capability_evidence: str = Field(min_length=1, max_length=1000)
     atomic_alias_switch: Literal[True]
     exclusive_alias_writer: Literal[True]
-    max_document_bytes: int = Field(ge=1024, le=1048576)
+    max_document_bytes: int = Field(ge=1024, le=104857600)
     index_settings: dict
 
     @field_validator("alias", "index_prefix")

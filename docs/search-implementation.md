@@ -28,8 +28,15 @@ work, active index epoch and retired-identity fence before every attempt.
 approve unrelated sequence holes. The returned `VisibilityProof` identifies
 covered sequences; it does not mutate SQL progress.
 
-The worker remains responsible for the 100 ms accumulation limit and publishing
-contiguous per-tenant progress, view generation and invalidation outbox atomically.
+The running worker assembles at most 50 documents and a 4 MiB ordinary bulk per
+turn, with an explicitly allocated single-document exception. It streams note
+text from PostgreSQL and retains only bounded distinct tokens during assembly.
+Already search-visible identical documents are verified without another write.
+One process-owned Elasticsearch client serves both hints and reconciliation.
+The worker publishes contiguous per-tenant progress and view generation only
+after complete coverage. Thirty-second scan claims and conditional ownership
+checks prevent duplicate page work and stale-owner progress; isolated five-second
+tenant retries preserve failed watermarks while healthy work continues.
 Index writer fencing, rebuild holds, catch-up validation and atomic alias cutover
 remain application worker/control-plane responsibilities. This adapter does not
 claim a completed rebuild implementation.
