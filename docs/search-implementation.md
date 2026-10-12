@@ -95,17 +95,17 @@ credentials and trust using the owning team's normal mechanism. Do not point
 this test at an index used by the company application.
 
 ```powershell
-uv sync --project backend --group dev --frozen
-$env:PYTHONPATH = (Resolve-Path backend).Path
+poetry check --lock
+poetry sync --all-extras
 $env:APPCHI_TEST_ELASTICSEARCH_URL = 'https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
-uv run --project backend --frozen python -m pytest backend/tests/compatibility/test_search_elasticsearch.py -v
+poetry run python -m pytest tests/compatibility/test_search_elasticsearch.py -v
 ```
 
 ```sh
-uv sync --project backend --group dev --frozen
-export PYTHONPATH="$PWD/backend"
+poetry check --lock
+poetry sync --all-extras
 export APPCHI_TEST_ELASTICSEARCH_URL='https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
-uv run --project backend --frozen python -m pytest backend/tests/compatibility/test_search_elasticsearch.py -v
+poetry run python -m pytest tests/compatibility/test_search_elasticsearch.py -v
 ```
 
 Replace the endpoint placeholder before execution. A missing endpoint produces
