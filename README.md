@@ -83,3 +83,143 @@ Kafka handlers commit only a successfully covered contiguous partition prefix.
 A failed input pauses that partition for bounded retry at the same offset; other
 partitions continue. Retention loss on source/correlation is a persistent partition
 fence requiring explicit repair and restart, with no automatic offset skip.
+
+## Initial search activation for an isolated development cluster
+
+The explicit `appchi.search.bootstrap` command enables a **fresh development
+search projection** for diagnostics such as a private OpenShift load test. It is
+not a restore command or production qualification. The existing
+`appchi.search.local_bootstrap` remains restricted to its fixed loopback database
+and alias; none of its isolation checks are relaxed.
+
+Run the dedicated PostgreSQL migration job first. Keep ingestion and all writers
+stopped until this command succeeds. Use the normal `appchi_worker` database
+identity with the migration-granted permissions, not a database administrator.
+Do not grant extra restore privileges. This command never runs migrations.
+
+Supply the regular indexer `Settings` environment, including:
+
+| Setting | Requirement |
+| --- | --- |
+| `APPCHI_ENVIRONMENT` | Exactly `development`. |
+| `APPCHI_ROLE` | Exactly `indexer`. |
+| `APPCHI_DEPLOYMENT_EPOCH` | Same deployment epoch as the cluster's runtime services. |
+| `APPCHI_DATABASE_URL` | The isolated, migrated Appchi database using the worker identity and the required PostgreSQL TLS parameters. |
+| `APPCHI_WRAPPING_KEY` or `APPCHI_WRAPPING_KEYRING` | The existing valid runtime key configuration required by `Settings`. Do not generate a different key for each retry. |
+| `APPCHI_ELASTICSEARCH_URL` | HTTPS root origin, without user information, path prefix, query or fragment. |
+| `APPCHI_ELASTICSEARCH_INDEX` | Exact serving alias from the binding below. |
+| `APPCHI_ELASTICSEARCH_API_KEY` | Target-scoped credential, if required by supplied Elasticsearch. |
+| `APPCHI_ELASTICSEARCH_CA_FILE` | Mounted private CA bundle when the target uses a private issuer. TLS verification remains enabled. |
+| `APPCHI_ELASTICSEARCH_CLIENT_CERT` / `APPCHI_ELASTICSEARCH_CLIENT_KEY` | Existing optional mutual-TLS settings, supplied together. |
+| `APPCHI_CLOCK_HEALTH_FILE` / `APPCHI_DATABASE_CLOCK_HEALTH_FILE` | Both owner-published clock evidence files, using the ordinary runtime format. They must remain fresh through final activation. |
+
+Clock evidence is checked by the existing clock validator: synchronized `true`,
+finite offset within one second, and `measured_at` no more than 60 seconds old.
+Provide refreshed observations; do not turn an old observation into fresh evidence
+by replacing its timestamp.
+
+Use a validated `RebuildBinding` JSON file. This example uses illustrative names
+and a single-shard, no-replica diagnostic allocation; choose an allocation agreed
+with the Elasticsearch owner rather than treating these values as production
+sizing:
+
+```json
+{
+  "profile": "appchi-es-rebuild-v1",
+  "alias": "appchi-loadtest-alerts",
+  "index_prefix": "appchi-loadtest-alerts-",
+  "capability_evidence": "YOUR-SUPPLIED-INTEGRATION-REFERENCE",
+  "atomic_alias_switch": true,
+  "exclusive_alias_writer": true,
+  "max_document_bytes": 1048576,
+  "index_settings": {"number_of_shards": 1, "number_of_replicas": 0}
+}
+```
+
+The two boolean fields retain their existing binding contract: the supplied
+integration must support atomic alias switching and designate one alias writer.
+The command does not infer operational exclusivity from a successful probe.
+`capability_evidence` is the supplied integration reference, not a JSON assertion
+that tests passed. Initial bootstrap accepts only explicit integer
+`number_of_shards` (positive) and `number_of_replicas` (nonnegative) settings.
+`max_document_bytes` must accommodate the real synthetic compatibility fixtures;
+an insufficient limit fails rather than silently omitting that check.
+
+Choose and retain one physical index name under `index_prefix`, one UUID index
+epoch, and one nonblank operation reference (at most 200 characters). For example:
+
+```sh
+python -m appchi.search.bootstrap \
+  --binding /etc/appchi/bootstrap/search-binding.json \
+  --physical-index appchi-loadtest-alerts-initial \
+  --index-epoch YOUR-LOWERCASE-UUID \
+  --operation-reference YOUR-LOADTEST-RUN-REFERENCE \
+  --ingestion-and-writers-stopped
+```
+
+The last flag is an operator attestation that producers and writers are stopped;
+it does not stop workloads. The command also enforces PostgreSQL concurrency
+guards: a shared restore lock spans the operation, the existing search hold lock
+serializes it with rebuild operations, and short `NOWAIT` table locks prevent
+canonical writes during the final empty-state check and activation. External
+Elasticsearch calls never run inside a SQL transaction. An in-flight writer makes
+the command fail, leaving an initial search gate closed.
+
+The database must have no alert identities or projection work, zero tenant
+admission/change/projection/search watermarks, complete unblocked tenant state,
+and no active search writer leases. Unexpected tenant/index epochs, existing
+rebuilds, conflicting bindings, fenced or previously restored databases, foreign
+indices/aliases, unexpected mappings/settings, and any indexed documents are
+rejected. A refresh precedes the exact empty-index check so unrefreshed documents
+cannot be silently adopted.
+
+The command reserves its identity durably before creating the serving index.
+Exact canonical mappings carry additional `_meta.initial_bootstrap` ownership
+metadata, allowing an interrupted operation to identify only its own resources.
+It then creates two disposable indices named
+`<index_prefix>bootstrap-probe-<index_epoch>-a` and `-b`, plus an `-alias`, and
+exercises the real native CEL compiler, projection writer, search reader and
+count reader: strict mappings, external versions, refreshed visibility, tenant
+isolation, Unicode tokenization, PIT pagination, exact count batches, tombstone
+replay and one-request alias switching. Probe cleanup is required before
+activation. Elasticsearch credentials need cluster information access and index
+create/delete, mapping/settings/alias, write/refresh, search/PIT and alias-management
+permissions scoped to the exact serving alias and the selected index prefix.
+
+On success, all current empty tenant search watermarks, the serving control and
+the search gate change in one SQL transaction. JSON output and audit records
+include actual probe results, target cluster UUID/version, binding/mapping
+digests, operation identity, and `production_qualified: false`. This is a bounded
+development compatibility diagnostic, not proof of capacity, availability,
+exclusive infrastructure ownership or the complete production verification plan.
+
+Retry an interrupted run with the **same binding, endpoint/target, deployment
+epoch, physical index, index epoch and operation reference**. Matching owned
+resources are checked and reused, and an absent alias can be repaired. Disposable
+probe residue is deleted only after exact ownership/mapping checks. A successful
+repeat is allowed while the database/index remain empty and returns
+`already_active`; every repeat executes fresh probes. Once source data exists,
+use the normal indexer/rebuild workflow. Never reset restore gates, falsify audit
+records, adopt a foreign index, or erase populated data to make this initializer
+pass. Errors return a sanitized code and a nonzero exit status.
+
+### Verification
+
+The ordinary unit suite covers configuration, clock, mapping and lock failure
+guards. Opt-in integration tests create/drop **new random databases** and random
+Elasticsearch namespaces, exercising actual `appchi_worker` privileges, live
+probes, crash retry, restore fences and concurrent writes:
+
+```sh
+# Inject these privately, never commit their values:
+# APPCHI_BOOTSTRAP_TEST_POSTGRES_ADMIN_DSN (isolated server, CREATE DATABASE)
+# APPCHI_TEST_ELASTICSEARCH_URL (isolated HTTPS service)
+# APPCHI_TEST_ELASTICSEARCH_CA (optional trusted private CA path)
+# APPCHI_TEST_ELASTICSEARCH_API_KEY (optional isolated test credential)
+python -m pytest tests/integration/test_search_bootstrap_integration.py -q
+```
+
+The integration environment also needs the separately installed
+`appchi-migrations` package; the coordinated delivery development environment
+provides it. These fixture migrations run only in their freshly created test
+databases. They are not part of runtime or bootstrap startup.

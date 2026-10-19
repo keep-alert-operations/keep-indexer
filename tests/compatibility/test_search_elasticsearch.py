@@ -19,7 +19,14 @@ def real_search():
     endpoint = os.environ.get("APPCHI_TEST_ELASTICSEARCH_URL")
     if not endpoint:
         pytest.skip("Set APPCHI_TEST_ELASTICSEARCH_URL to an isolated real Elasticsearch service")
-    client = Elasticsearch(endpoint, request_timeout=10)
+    ca = os.environ.get("APPCHI_TEST_ELASTICSEARCH_CA")
+    api_key = os.environ.get("APPCHI_TEST_ELASTICSEARCH_API_KEY")
+    client = Elasticsearch(
+        endpoint,
+        request_timeout=10,
+        **({"ca_certs": ca} if ca else {}),
+        **({"api_key": api_key} if api_key else {}),
+    )
     index = "appchi-test-" + uuid4().hex
     client.indices.create(index=index, mappings=index_mapping())
     yield client, index
