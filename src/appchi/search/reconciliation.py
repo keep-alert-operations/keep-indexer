@@ -32,27 +32,33 @@ def current_page(
     ceiling_seq=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
 ):
-    identities = conn.execute(
-        """SELECT * FROM alert_identities WHERE tenant_id=%s
+    filters = """SELECT * FROM alert_identities WHERE tenant_id=%s
         AND (%s::uuid IS NULL OR id>%s) AND (%s::uuid IS NULL OR id=%s)
         AND (%s::uuid[] IS NULL OR id=ANY(%s::uuid[]))
-        AND current_projection_seq>%s AND (%s::bigint IS NULL OR current_projection_seq<=%s)
-        ORDER BY array_position(%s::uuid[],id),id LIMIT %s""",
-        (
-            tenant,
-            cursor,
-            cursor,
-            alert_id,
-            alert_id,
-            alert_ids,
-            alert_ids,
-            floor_seq,
-            ceiling_seq,
-            ceiling_seq,
-            alert_ids,
-            PAGE_SIZE,
-        ),
-    ).fetchall()
+        AND current_projection_seq>%s AND (%s::bigint IS NULL OR current_projection_seq<=%s)"""
+    params = [
+        tenant,
+        cursor,
+        cursor,
+        alert_id,
+        alert_id,
+        alert_ids,
+        alert_ids,
+        floor_seq,
+        ceiling_seq,
+        ceiling_seq,
+    ]
+    # Cursor scans read the (tenant_id,id) index in order. Only an explicit
+    # identity list keeps its caller's order, which needs a sort.
+    if alert_ids is None:
+        identities = conn.execute(
+            filters + " ORDER BY id LIMIT %s", (*params, PAGE_SIZE)
+        ).fetchall()
+    else:
+        identities = conn.execute(
+            filters + " ORDER BY array_position(%s::uuid[],id),id LIMIT %s",
+            (*params, alert_ids, PAGE_SIZE),
+        ).fetchall()
     ids = [row["id"] for row in identities]
     if not ids:
         return []
