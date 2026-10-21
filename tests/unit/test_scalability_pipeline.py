@@ -12,7 +12,7 @@ from appchi.search.reconciliation import (
     publish_page,
 )
 from appchi.search.writer import ProjectionWriter
-from appchi.shared.errors import AppError
+from appchi.shared.errors import AppError, unavailable
 
 
 def snapshot(notes=()):
@@ -95,6 +95,28 @@ def test_bulk_waits_for_one_refresh_for_fifty_documents():
     client.bulk.assert_called_once()
     assert len(client.bulk.call_args.kwargs["operations"]) == 100
     assert client.bulk.call_args.kwargs["refresh"] == "wait_for"
+
+
+def test_write_is_reported_when_verification_after_bulk_fails(monkeypatch):
+    from appchi.search import reconciliation
+
+    items = [Projection("tenant", 1, str(i), 1, {"deleted": True}) for i in range(3)]
+    client = Mock()
+    client.search.side_effect = [{"hits": {"hits": []}}, RuntimeError("degraded")]
+    client.bulk.return_value = {"items": [{"index": {"status": 201}} for _ in items]}
+    writer = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000)
+    with pytest.raises(AppError) as failure:
+        writer.publish(items, guard=lambda *args: None, covered_by_newer=lambda *args: False)
+    assert failure.value.code == "projection_unavailable"
+    assert writer.written == 3
+    failing = Mock()
+    failing.return_value.written = 3
+    failing.return_value.publish.side_effect = unavailable("projection_unavailable")
+    monkeypatch.setattr(reconciliation, "ProjectionWriter", failing)
+    announced = Mock()
+    with pytest.raises(AppError):
+        publish_page(Mock(), Mock(), "index", "epoch", items, on_write=announced)
+    announced.assert_called_once_with()
 
 
 def test_supported_notes_above_one_megabyte_remain_searchable():
