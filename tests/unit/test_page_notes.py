@@ -33,14 +33,17 @@ class NamedCursor:
 
     def execute(self, query, params):
         self.statements.append((query, params))
-        tenant, ids = params[0], set(params[1])
+        if "WITH ORDINALITY" in query:
+            order, tenant = list(params[0]), params[1]
+        else:
+            tenant, order = params[0], None
+        ids = set(order if order is not None else params[1])
         rows = [
             note
             for note in self.conn.notes
             if note["tenant_id"] == tenant and note["alert_id"] in ids and not note["deleted"]
         ]
-        if "array_position" in query:
-            order = list(params[2])
+        if order is not None:
             rows.sort(key=lambda note: (order.index(note["alert_id"]), note["id"]))
         else:
             rows.sort(key=lambda note: (note["alert_id"], note["id"]))
@@ -205,8 +208,11 @@ def test_requested_page_keeps_caller_order_with_one_statement():
     assert [UUID(item.alert_id) for item in page] == requested
     (cursor,) = conn.cursors
     ((query, params),) = cursor.statements
-    assert query.endswith("ORDER BY array_position(%s::uuid[],alert_id),id")
-    assert params[1] == params[2] == [uid(5), uid(2), uid(1)]
+    # Walked alert by alert in caller order, never sorted as a whole page.
+    assert "unnest(%s::uuid[]) WITH ORDINALITY" in query
+    assert "tenant_id=%s AND alert_id=u.alert_id AND NOT deleted ORDER BY id" in query
+    assert query.endswith("ORDER BY u.ord,n.id") and "array_position" not in query
+    assert params == ([uid(5), uid(2), uid(1)], TENANT)
     by_id = {UUID(item.alert_id): item for item in page}
     for row in rows:
         assert by_id[row["id"]].tokens == expected_tokens(row, notes)
@@ -263,3 +269,14 @@ def test_page_byte_bound_stops_streaming_later_alerts(monkeypatch):
     (cursor,) = conn.cursors
     assert cursor.fetched == 31 and cursor.closed
     assert isinstance(page[0], Projection)
+
+
+def test_caller_ordered_notes_stream_per_alert_in_note_id_order():
+    first, second = uid(1), uid(2)
+    notes = [note(3, first, "c"), note(1, second, "x"), note(2, first, "b"), note(0, second, "w")]
+    conn = Conn([], [], notes)
+    with reconciliation.PageNotes(conn, TENANT, [second, first]) as page_notes:
+        assert list(page_notes.of(second)) == ["w", "x"]
+        assert list(page_notes.of(first)) == ["b", "c"]
+    ((query, params),) = conn.cursors[0].statements
+    assert "WITH ORDINALITY" in query and params == ([second, first], TENANT)

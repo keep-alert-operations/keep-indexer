@@ -112,22 +112,31 @@ class PageNotes:
             self.cursor.close()
 
     def open(self):
-        # Cursor scans list identities in id order, which the partial
-        # (tenant_id,alert_id,id) index already returns. Only an explicit
-        # caller-ordered identity list orders its notes by list position.
-        ids = self.alert_ids
-        if ids == sorted(ids):
-            order, params = "alert_id,id", (self.tenant, ids)
-        else:
-            order, params = "array_position(%s::uuid[],alert_id),id", (self.tenant, ids, ids)
         self.cursor = self.conn.cursor(name="projection_notes_" + uuid4().hex)
         self.cursor.itersize = self.ITERSIZE
-        self.cursor.execute(
-            "SELECT alert_id,text FROM alert_notes WHERE tenant_id=%s"
-            " AND alert_id=ANY(%s::uuid[]) AND NOT deleted ORDER BY " + order,
-            params,
-        )
+        self.cursor.execute(*self.statement(self.tenant, self.alert_ids))
         self.rows = iter(self.cursor)
+
+    @staticmethod
+    def statement(tenant, ids):
+        # Both forms read the partial (tenant_id,alert_id,id) notes index and
+        # never sort the whole page. Cursor scans list identities in id order,
+        # which one index scan over the id array returns directly.
+        if ids == sorted(ids):
+            return (
+                "SELECT alert_id,text FROM alert_notes WHERE tenant_id=%s"
+                " AND alert_id=ANY(%s::uuid[]) AND NOT deleted ORDER BY alert_id,id",
+                (tenant, ids),
+            )
+        # A caller-ordered list (Kafka order) is walked alert by alert: a
+        # nested loop probes the index per alert, so at most one alert's notes
+        # are ordered at a time (an incremental sort presorted by position).
+        return (
+            "SELECT u.alert_id,n.text FROM unnest(%s::uuid[]) WITH ORDINALITY u(alert_id,ord)"
+            " CROSS JOIN LATERAL (SELECT id,text FROM alert_notes WHERE tenant_id=%s"
+            " AND alert_id=u.alert_id AND NOT deleted ORDER BY id) n ORDER BY u.ord,n.id",
+            (ids, tenant),
+        )
 
     def of(self, alert):
         """Yield one alert's live note texts in note-id order."""
