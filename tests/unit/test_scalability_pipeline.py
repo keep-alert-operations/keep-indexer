@@ -67,12 +67,14 @@ def test_visible_identical_page_has_no_write_or_refresh():
     items = [Projection("tenant", 1, str(i), 1, {"deleted": True}) for i in range(50)]
     client = Mock()
     client.search.return_value = visible(items)
-    proof = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000).publish(
+    writer = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000)
+    proof = writer.publish(
         items,
         guard=lambda *args: None,
         covered_by_newer=lambda *args: False,
     )
     assert len(proof.covered) == 50
+    assert writer.written == 0
     client.bulk.assert_not_called()
     assert client.search.call_count == 1
 
@@ -82,12 +84,14 @@ def test_bulk_waits_for_one_refresh_for_fifty_documents():
     client = Mock()
     client.search.side_effect = [{"hits": {"hits": []}}, visible(items)]
     client.bulk.return_value = {"items": [{"index": {"status": 201}} for _ in items]}
-    proof = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000).publish(
+    writer = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000)
+    proof = writer.publish(
         items,
         guard=lambda *args: None,
         covered_by_newer=lambda *args: False,
     )
     assert len(proof.covered) == 50
+    assert writer.written == 50
     client.bulk.assert_called_once()
     assert len(client.bulk.call_args.kwargs["operations"]) == 100
     assert client.bulk.call_args.kwargs["refresh"] == "wait_for"

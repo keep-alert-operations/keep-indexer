@@ -37,8 +37,10 @@ The worker publishes contiguous per-tenant progress and view generation only
 after complete coverage. A completed pass updates the tenant view state, and so
 emits a live hint, only when it advances `searchable_seq`, restores a cleared
 `verified_at` or completes the epoch's first full audit; an idle pass writes
-nothing, so `verified_at` records the last such change. Thirty-second scan
-claims and conditional ownership checks prevent duplicate page work and stale-owner progress; isolated five-second
+nothing, so `verified_at` records the last such change. A periodic audit page
+that rewrites a missing or stale document bumps only `view_generation`, so open
+feeds refetch the repair. Thirty-second scan claims and conditional ownership
+checks prevent duplicate page work and stale-owner progress; isolated five-second
 tenant retries preserve failed watermarks while healthy work continues.
 Index writer fencing, rebuild holds, catch-up validation and atomic alias cutover
 remain application worker/control-plane responsibilities. This adapter does not

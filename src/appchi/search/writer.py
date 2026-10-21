@@ -11,6 +11,7 @@ class ProjectionWriter:
     def __init__(self, client, index: str, index_epoch: str, *, max_document_bytes: int):
         self.client, self.index, self.index_epoch = client, index, index_epoch
         self.max_document_bytes = max_document_bytes
+        self.written = 0  # Documents the last publish wrote; zero when all were visible.
 
     def publish(
         self,
@@ -101,6 +102,7 @@ class ProjectionWriter:
                     continue
                 if version <= item.version or not covered_by_newer(item, hit["_source"]):
                     raise unavailable("projection_coverage_unproven")
+            self.written = len(operations) // 2
             return VisibilityProof(
                 self.index_epoch, tuple((i.tenant_id, i.seq, i.alert_id, i.version) for i in items)
             )

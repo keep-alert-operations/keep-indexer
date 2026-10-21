@@ -150,6 +150,7 @@ def publish_page(
     *,
     fence=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
+    on_write=None,
 ):
     from .control import check_writer
 
@@ -198,9 +199,10 @@ def publish_page(
         size += item_bytes
         if size >= BULK_BYTES:
             break
-    ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes).publish(
-        selected, guard=guard, covered_by_newer=newer
-    )
+    writer = ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes)
+    writer.publish(selected, guard=guard, covered_by_newer=newer)
+    if writer.written and on_write:
+        on_write()
     return selected
 
 
@@ -364,6 +366,7 @@ def audit_page(db, client, physical_index, tenant, epoch, *, max_document_bytes,
             ceiling_seq=state["audit_boundary_seq"],
             max_document_bytes=max_document_bytes,
         )
+    repaired = []
     items = (
         publish_page(
             db,
@@ -373,6 +376,7 @@ def audit_page(db, client, physical_index, tenant, epoch, *, max_document_bytes,
             items,
             fence=fence,
             max_document_bytes=max_document_bytes,
+            on_write=lambda: repaired.append(True),
         )
         or []
     )
@@ -383,6 +387,12 @@ def audit_page(db, client, physical_index, tenant, epoch, *, max_document_bytes,
             (epoch, tenant),
         ).fetchone()
         check_claim(conn, epoch, tenant, claim)
+        if repaired:
+            # Repairs leave the watermark alone, but open feeds must still refetch.
+            conn.execute(
+                "UPDATE tenant_view_state SET view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
+                (tenant, epoch),
+            )
         fields = ("audit_boundary_seq", "audit_cursor", "audit_started_at")
         if any(current[field] != state[field] for field in fields):
             return False
