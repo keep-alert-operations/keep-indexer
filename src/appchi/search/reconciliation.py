@@ -32,33 +32,35 @@ def current_page(
     ceiling_seq=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
 ):
-    filters = """SELECT * FROM alert_identities WHERE tenant_id=%s
-        AND (%s::uuid IS NULL OR id>%s) AND (%s::uuid IS NULL OR id=%s)
-        AND (%s::uuid[] IS NULL OR id=ANY(%s::uuid[]))
-        AND current_projection_seq>%s AND (%s::bigint IS NULL OR current_projection_seq<=%s)"""
-    params = [
-        tenant,
-        cursor,
-        cursor,
-        alert_id,
-        alert_id,
-        alert_ids,
-        alert_ids,
-        floor_seq,
-        ceiling_seq,
-        ceiling_seq,
-    ]
-    # Cursor scans read the (tenant_id,id) index in order. Only an explicit
-    # identity list keeps its caller's order, which needs a sort.
-    if alert_ids is None:
-        identities = conn.execute(
-            filters + " ORDER BY id LIMIT %s", (*params, PAGE_SIZE)
-        ).fetchall()
+    filters, params = ["tenant_id=%s", "current_projection_seq>%s"], [tenant, floor_seq]
+    for clause, value in (
+        ("current_projection_seq<=%s", ceiling_seq),
+        ("id=%s", alert_id),
+        ("id=ANY(%s::uuid[])", alert_ids),
+    ):
+        if value is not None:
+            filters.append(clause)
+            params.append(value)
+    query = "SELECT * FROM alert_identities WHERE " + " AND ".join(filters)
+    # A full pass or audit (floor_seq=0) walks the (tenant_id,id) index from
+    # the cursor. A delta pass reads only identities changed after floor_seq
+    # through the (tenant_id,current_projection_seq,id) index and sorts them:
+    # sequence statistics are global, so an ordered id walk can visit every
+    # unchanged identity of a tenant whose sequences are low; OFFSET 0 keeps
+    # the subquery from being flattened into one. Unprepared execution plans
+    # each page from its actual bounds, never a generic plan.
+    if floor_seq:
+        query = "SELECT * FROM (" + query + " OFFSET 0) changed"
+    if cursor is not None:
+        query += (" WHERE" if floor_seq else " AND") + " id>%s"
+        params.append(cursor)
+    # Only an explicit identity list keeps its caller's order.
+    if alert_ids is not None:
+        query += " ORDER BY array_position(%s::uuid[],id),id"
+        params.append(alert_ids)
     else:
-        identities = conn.execute(
-            filters + " ORDER BY array_position(%s::uuid[],id),id LIMIT %s",
-            (*params, alert_ids, PAGE_SIZE),
-        ).fetchall()
+        query += " ORDER BY id"
+    identities = conn.execute(query + " LIMIT %s", (*params, PAGE_SIZE), prepare=False).fetchall()
     ids = [row["id"] for row in identities]
     if not ids:
         return []
