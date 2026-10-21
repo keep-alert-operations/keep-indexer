@@ -314,9 +314,20 @@ def reconcile_page(
             (epoch, tenant),
         )
         if advance_serving:
+            # Every view-state update fires a live hint. An idle pass that neither
+            # advances, verifies nor completes the first full audit leaves it alone.
             conn.execute(
-                "UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),verified_at=clock_timestamp(),view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
-                (state["boundary_seq"], tenant, epoch),
+                """UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),
+                    verified_at=clock_timestamp(),view_generation=view_generation+1
+                    WHERE tenant_id=%s AND index_epoch=%s
+                        AND (searchable_seq<%s OR verified_at IS NULL OR %s)""",
+                (
+                    state["boundary_seq"],
+                    tenant,
+                    epoch,
+                    state["boundary_seq"],
+                    state["full_audit_at"] is None,
+                ),
             )
         return True
 
