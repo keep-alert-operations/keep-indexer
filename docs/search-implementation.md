@@ -28,8 +28,13 @@ work, active index epoch and retired-identity fence before every attempt.
 approve unrelated sequence holes. The returned `VisibilityProof` identifies
 covered sequences; it does not mutate SQL progress.
 
-The running worker assembles at most 50 documents and a 4 MiB ordinary bulk per
-turn, with an explicitly allocated single-document exception. It streams note
+Authority scans assemble at most 50 documents per page. A Kafka hint turn hands
+the first pending group of every busy partition, at most 500 hints in all, to
+one projection request, so one bulk of at most 500 documents and 4 MiB and one
+refresh wait cover all of them. Each partition's offset advances only by its
+own covered prefix after the bulk is acknowledged and search-visible; a failed
+or unreached head partition is retried alone, where faults stay isolated. A
+single large document keeps its explicitly allocated exception. It streams note
 text from PostgreSQL and retains only bounded distinct tokens during assembly.
 Already search-visible identical documents are verified without another write.
 One process-owned Elasticsearch client serves both hints and reconciliation.

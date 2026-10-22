@@ -2,8 +2,8 @@
 
 from appchi.kafka_changed import ChangedConsumer
 from appchi.pipeline_runtime import run
-from appchi.search.consumer import index_record, index_batch
-from appchi.search.reconciliation import ReconciliationRunner
+from appchi.search.consumer import index_record, index_batch, index_groups
+from appchi.search.reconciliation import BULK_DOCUMENTS, ReconciliationRunner
 
 
 def main():
@@ -16,6 +16,10 @@ def main():
             "indexer",
             index_record,
             batch_handler=index_batch,
+            # One bulk carries every busy partition's hints, up to the writer's
+            # 500-document limit, behind a single refresh wait.
+            groups_handler=index_groups,
+            batch_size=BULK_DOCUMENTS,
         ),
         before_turn=ReconciliationRunner(),
         transport_optional=True,
