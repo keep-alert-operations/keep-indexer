@@ -209,3 +209,85 @@ def test_failed_tenant_gets_retry_without_advancing_watermark(monkeypatch):
     assert "lease_owner=%s" in failure[0]
     assert not any("UPDATE tenant_view_state" in sql for sql, _ in queries)
     assert any("SKIP LOCKED" in sql for sql, _ in queries)
+
+
+def test_one_bulk_and_one_refresh_wait_cover_the_writer_document_limit():
+    items = [Projection(f"tenant{i % 7}", 1, str(i), 1, {"deleted": True}) for i in range(500)]
+    client = Mock()
+    client.search.side_effect = [{"hits": {"hits": []}}, visible(items)]
+    client.bulk.return_value = {"items": [{"index": {"status": 201}} for _ in items]}
+    proof = ProjectionWriter(client, "index", "epoch", max_document_bytes=100000).publish(
+        items,
+        guard=lambda *args: None,
+        covered_by_newer=lambda *args: False,
+    )
+    assert len(proof.covered) == 500
+    client.bulk.assert_called_once()
+    assert len(client.bulk.call_args.kwargs["operations"]) == 1000
+    assert client.bulk.call_args.kwargs["refresh"] == "wait_for"
+    extra = [*items, Projection("tenant", 1, "500", 1, {"deleted": True})]
+    with pytest.raises(AppError) as failure:
+        ProjectionWriter(Mock(), "index", "epoch", max_document_bytes=100000).publish(
+            extra, guard=lambda *args: None, covered_by_newer=lambda *args: False
+        )
+    assert failure.value.code == "projection_batch_limit"
+
+
+def test_publish_page_selects_up_to_500_documents_within_4_mib(monkeypatch):
+    from appchi.search import reconciliation
+
+    writer = Mock()
+    monkeypatch.setattr(reconciliation, "ProjectionWriter", writer)
+    items = [Projection("tenant", 1, str(i), 1, {"deleted": True}) for i in range(600)]
+    selected = publish_page(Mock(), Mock(), "index", "epoch", items)
+    assert selected == items[:500]
+    assert writer.return_value.publish.call_args.args[0] == items[:500]
+    # Large documents still stop at 4 MiB, never past an unselected item.
+    tokens = tuple(f"token{j:06d}" for j in range(8000))
+    items = [
+        Projection("tenant", 1, str(i), 1, {**snapshot(), "id": str(i)}, tokens) for i in range(100)
+    ]
+    selected = publish_page(Mock(), Mock(), "index", "epoch", items)
+    assert 1 < len(selected) < 100 and selected == items[: len(selected)]
+    total = sum(len(reconciliation.canonical(build_document(i))) + 512 for i in selected)
+    assert total <= reconciliation.BULK_BYTES
+
+
+def test_project_many_stops_assembling_at_the_document_limit(monkeypatch):
+    from appchi.search import control, reconciliation
+
+    @contextmanager
+    def lease(db, settings):
+        yield "index"
+
+    monkeypatch.setattr(control, "writer_lease", lease)
+    assembled = []
+
+    def page(conn, tenant, *, alert_ids, max_document_bytes):
+        rows = [Projection(tenant, 1, alert, 1, {"deleted": True}) for alert in alert_ids]
+        assembled.append(tenant)
+        return rows
+
+    monkeypatch.setattr(reconciliation, "current_page", page)
+    published = []
+
+    def publish(db, client, physical_index, epoch, items, **kwargs):
+        published.append(items)
+        return items[:500]
+
+    monkeypatch.setattr(reconciliation, "publish_page", publish)
+
+    @contextmanager
+    def transaction(*args, **kwargs):
+        yield SimpleNamespace(
+            execute=lambda *a: SimpleNamespace(fetchone=lambda: {"index_epoch": "epoch"})
+        )
+
+    service = reconciliation.ProjectionService.__new__(reconciliation.ProjectionService)
+    service.db = SimpleNamespace(transaction=transaction)
+    service.settings, service.client, service.max_document_bytes = None, Mock(), 100000
+    requests = [(f"t{t}", f"{t}-{a}") for t in range(4) for a in range(200)]
+    covered = service.project_many(requests)
+    # Three tenants fill 600 >= 500 candidates; the fourth is never read.
+    assert assembled == ["t0", "t1", "t2"]
+    assert len(published) == 1 and len(covered) == 500
