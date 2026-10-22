@@ -8,6 +8,7 @@ Only a completed, search-visible pass advances the lower-bound watermark to S.
 from collections import defaultdict
 from contextlib import suppress
 import logging
+from time import monotonic
 from uuid import uuid4
 
 from appchi.shared.errors import unavailable
@@ -22,6 +23,8 @@ PAGE_SIZE = 50
 BULK_DOCUMENTS = 500
 BULK_BYTES = 4 * 1024 * 1024
 DEVELOPMENT_DOCUMENT_BYTES = 100 * 1024 * 1024
+# Longest an idle scan goes without rereading due state from PostgreSQL.
+IDLE_RECHECK_SECONDS = 1.0
 log = logging.getLogger(__name__)
 
 
@@ -598,7 +601,60 @@ class ProjectionService:
             )
             return {(item.tenant_id, item.alert_id) for item in published}
 
+    # Monotonic time before which no tenant can be due; 0 means check now.
+    idle_until = 0.0
+
+    def idle_seconds(self):
+        """Seconds until the next due check; 0 while work may be due."""
+        return max(0.0, self.idle_until - monotonic())
+
+    def next_due(self):
+        """Seconds until a tenant becomes claimable, read without a writer lease.
+
+        Mirrors the claim predicate below. Returns 0 when a claim may succeed now
+        (including view states without a reconciliation row) and None when no
+        reconciliation row exists (the statement's empty case yields NULL). A closed search gate fails as the claim would;
+        writer fences (paused writers, epoch or binding changes) are still
+        enforced by the writer lease that every claim takes.
+        """
+        with self.db.transaction(read_committed=True) as conn:
+            row = conn.execute(
+                """SELECT (SELECT ready FROM capability_gates WHERE capability='search') AS ready,
+                    EXISTS(SELECT 1 FROM tenant_view_state v
+                        JOIN tenant_work_state w ON w.tenant_id=v.tenant_id
+                        WHERE NOT EXISTS(SELECT 1 FROM search_reconciliation r
+                            WHERE r.index_epoch=v.index_epoch AND r.tenant_id=v.tenant_id))
+                        AS unregistered,
+                    (SELECT CASE WHEN count(*)=0 THEN NULL WHEN bool_or(d.due_at IS NULL) THEN 0
+                        ELSE greatest(0,extract(epoch FROM min(d.due_at)-clock_timestamp())) END
+                    FROM (SELECT greatest(
+                        CASE WHEN r.completed_at IS NULL OR r.audit_started_at IS NOT NULL
+                            THEN NULL ELSE r.completed_at+interval '2 seconds' END,
+                        r.lease_until,r.retry_after) AS due_at
+                        FROM search_reconciliation r JOIN tenant_view_state v
+                            ON v.tenant_id=r.tenant_id AND v.index_epoch=r.index_epoch) d) AS due_in"""
+            ).fetchone()
+        if not row["ready"]:
+            raise unavailable("search_not_ready")
+        if row["unregistered"]:
+            return 0.0
+        return None if row["due_in"] is None else float(row["due_in"])
+
     def reconcile(self):
+        # An idle turn issues no statement until the next due time, bounded so
+        # new tenants, epochs and gate changes are seen within IDLE_RECHECK_SECONDS.
+        if monotonic() < self.idle_until:
+            return 0
+        self.idle_until = 0.0
+        wait = self.next_due()
+        if wait is None or wait > 0:
+            self.idle_until = monotonic() + (
+                IDLE_RECHECK_SECONDS if wait is None else min(IDLE_RECHECK_SECONDS, wait)
+            )
+            return 0
+        return self.claim_and_reconcile()
+
+    def claim_and_reconcile(self):
         from .control import writer_lease
 
         owner = uuid4()
@@ -719,6 +775,10 @@ class ReconciliationRunner:
             )
             self.service = service_for(db, settings, profile)
         return self.service.reconcile()
+
+    def idle_seconds(self):
+        """Let the worker loop sleep until the next due check when it has no poll."""
+        return self.service.idle_seconds() if self.service else 0.0
 
     def close(self):
         if self.service:
