@@ -6,6 +6,7 @@ Only a completed, search-visible pass advances the lower-bound watermark to S.
 """
 
 from collections import defaultdict
+from contextlib import suppress
 import logging
 from uuid import uuid4
 
@@ -163,6 +164,7 @@ def publish_page(
     *,
     fence=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
+    on_write=None,
 ):
     from .control import check_writer
 
@@ -211,9 +213,13 @@ def publish_page(
         size += item_bytes
         if size >= BULK_BYTES:
             break
-    ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes).publish(
-        selected, guard=guard, covered_by_newer=newer
-    )
+    writer = ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes)
+    try:
+        writer.publish(selected, guard=guard, covered_by_newer=newer)
+    finally:
+        # A bulk may have repaired documents even when its verification fails.
+        if writer.written and on_write:
+            on_write()
     return selected
 
 
@@ -327,9 +333,20 @@ def reconcile_page(
             (epoch, tenant),
         )
         if advance_serving:
+            # Every view-state update fires a live hint. An idle pass that neither
+            # advances, verifies nor completes the first full audit leaves it alone.
             conn.execute(
-                "UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),verified_at=clock_timestamp(),view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
-                (state["boundary_seq"], tenant, epoch),
+                """UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),
+                    verified_at=clock_timestamp(),view_generation=view_generation+1
+                    WHERE tenant_id=%s AND index_epoch=%s
+                        AND (searchable_seq<%s OR verified_at IS NULL OR %s)""",
+                (
+                    state["boundary_seq"],
+                    tenant,
+                    epoch,
+                    state["boundary_seq"],
+                    state["full_audit_at"] is None,
+                ),
             )
         return True
 
@@ -366,43 +383,64 @@ def audit_page(db, client, physical_index, tenant, epoch, *, max_document_bytes,
             ceiling_seq=state["audit_boundary_seq"],
             max_document_bytes=max_document_bytes,
         )
-    items = (
-        publish_page(
-            db,
-            client,
-            physical_index,
-            epoch,
-            items,
-            fence=fence,
-            max_document_bytes=max_document_bytes,
-        )
-        or []
-    )
-    with db.transaction() as conn:
-        fence(conn)
-        current = conn.execute(
-            "SELECT * FROM search_reconciliation WHERE index_epoch=%s AND tenant_id=%s FOR UPDATE",
-            (epoch, tenant),
-        ).fetchone()
-        check_claim(conn, epoch, tenant, claim)
-        fields = ("audit_boundary_seq", "audit_cursor", "audit_started_at")
-        if any(current[field] != state[field] for field in fields):
-            return False
-        if items:
-            conn.execute(
-                """UPDATE search_reconciliation SET audit_cursor=%s,
-                audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),audit_turns=0
-                WHERE index_epoch=%s AND tenant_id=%s""",
-                (items[-1].alert_id, epoch, tenant),
-            )
-            return False
+    repaired = []
+
+    def announce(conn):
+        # Repairs leave the watermark alone, but open feeds must still refetch.
         conn.execute(
-            """UPDATE search_reconciliation SET audit_cursor=NULL,audit_boundary_seq=NULL,
-            audit_started_at=NULL,audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),
-            full_audit_at=clock_timestamp(),audit_turns=0 WHERE index_epoch=%s AND tenant_id=%s""",
-            (epoch, tenant),
+            "UPDATE tenant_view_state SET view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
+            (tenant, epoch),
         )
-        return True
+
+    try:
+        items = (
+            publish_page(
+                db,
+                client,
+                physical_index,
+                epoch,
+                items,
+                fence=fence,
+                max_document_bytes=max_document_bytes,
+                on_write=lambda: repaired.append(True),
+            )
+            or []
+        )
+        with db.transaction() as conn:
+            fence(conn)
+            current = conn.execute(
+                "SELECT * FROM search_reconciliation WHERE index_epoch=%s AND tenant_id=%s FOR UPDATE",
+                (epoch, tenant),
+            ).fetchone()
+            check_claim(conn, epoch, tenant, claim)
+            if repaired:
+                announce(conn)
+            fields = ("audit_boundary_seq", "audit_cursor", "audit_started_at")
+            if any(current[field] != state[field] for field in fields):
+                return False
+            if items:
+                conn.execute(
+                    """UPDATE search_reconciliation SET audit_cursor=%s,
+                    audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),audit_turns=0
+                    WHERE index_epoch=%s AND tenant_id=%s""",
+                    (items[-1].alert_id, epoch, tenant),
+                )
+                return False
+            conn.execute(
+                """UPDATE search_reconciliation SET audit_cursor=NULL,audit_boundary_seq=NULL,
+                audit_started_at=NULL,audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),
+                full_audit_at=clock_timestamp(),audit_turns=0 WHERE index_epoch=%s AND tenant_id=%s""",
+                (epoch, tenant),
+            )
+            return True
+    except Exception:
+        # A retry finds the repaired documents visible and would never announce
+        # them. Without the claim, announce them as long as this index is current.
+        if repaired:
+            with suppress(Exception), db.transaction() as conn:
+                check_writer(conn, physical_index, epoch)
+                announce(conn)
+        raise
 
 
 def check_claim(conn, epoch, tenant, owner):
