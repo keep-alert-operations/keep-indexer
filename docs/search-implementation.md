@@ -28,13 +28,27 @@ work, active index epoch and retired-identity fence before every attempt.
 approve unrelated sequence holes. The returned `VisibilityProof` identifies
 covered sequences; it does not mutate SQL progress.
 
-The running worker assembles at most 50 documents and a 4 MiB ordinary bulk per
-turn, with an explicitly allocated single-document exception. It streams note
+Authority scans assemble at most 50 documents per page. A Kafka hint turn hands
+the first pending group of every busy partition, at most 500 hints in all, to
+one projection request, so one bulk of at most 500 documents and 4 MiB and one
+refresh wait cover all of them. Each partition's offset advances only by its
+own covered prefix after the bulk is acknowledged and search-visible; a failed
+or unreached head partition is retried alone, where faults stay isolated.
+After a failed shared request, every non-head partition it included is left out
+of shared requests until it has handled every input it had in that request alone
+(or was fenced, revoked or lost), and no shared request is made while such a partition
+is the head. A
+single large document keeps its explicitly allocated exception. It streams note
 text from PostgreSQL and retains only bounded distinct tokens during assembly.
 Already search-visible identical documents are verified without another write.
 One process-owned Elasticsearch client serves both hints and reconciliation.
 The worker publishes contiguous per-tenant progress and view generation only
-after complete coverage. Thirty-second scan claims and conditional ownership
+after complete coverage. A completed pass updates the tenant view state, and so
+emits a live hint, only when it advances `searchable_seq`, restores a cleared
+`verified_at` or completes the epoch's first full audit; an idle pass writes
+nothing, so `verified_at` records the last such change. A periodic audit page
+that rewrites a missing or stale document bumps only `view_generation`, so open
+feeds refetch the repair. Thirty-second scan claims and conditional ownership
 checks prevent duplicate page work and stale-owner progress; isolated five-second
 tenant retries preserve failed watermarks while healthy work continues.
 Index writer fencing, rebuild holds, catch-up validation and atomic alias cutover

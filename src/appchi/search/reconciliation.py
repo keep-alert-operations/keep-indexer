@@ -6,6 +6,7 @@ Only a completed, search-visible pass advances the lower-bound watermark to S.
 """
 
 from collections import defaultdict
+from contextlib import suppress
 import logging
 from uuid import uuid4
 
@@ -15,7 +16,10 @@ from appchi.search.projection import Projection, build_document, canonical
 from appchi.search.text import source_tokens
 from appchi.search.writer import ProjectionWriter
 
+# Authority scan page; hint batches name their identities and may reach the
+# projection writer's per-bulk document limit instead.
 PAGE_SIZE = 50
+BULK_DOCUMENTS = 500
 BULK_BYTES = 4 * 1024 * 1024
 DEVELOPMENT_DOCUMENT_BYTES = 100 * 1024 * 1024
 log = logging.getLogger(__name__)
@@ -32,27 +36,37 @@ def current_page(
     ceiling_seq=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
 ):
-    identities = conn.execute(
-        """SELECT * FROM alert_identities WHERE tenant_id=%s
-        AND (%s::uuid IS NULL OR id>%s) AND (%s::uuid IS NULL OR id=%s)
-        AND (%s::uuid[] IS NULL OR id=ANY(%s::uuid[]))
-        AND current_projection_seq>%s AND (%s::bigint IS NULL OR current_projection_seq<=%s)
-        ORDER BY array_position(%s::uuid[],id),id LIMIT %s""",
-        (
-            tenant,
-            cursor,
-            cursor,
-            alert_id,
-            alert_id,
-            alert_ids,
-            alert_ids,
-            floor_seq,
-            ceiling_seq,
-            ceiling_seq,
-            alert_ids,
-            PAGE_SIZE,
-        ),
-    ).fetchall()
+    filters, params = ["tenant_id=%s", "current_projection_seq>%s"], [tenant, floor_seq]
+    for clause, value in (
+        ("current_projection_seq<=%s", ceiling_seq),
+        ("id=%s", alert_id),
+        ("id=ANY(%s::uuid[])", alert_ids),
+    ):
+        if value is not None:
+            filters.append(clause)
+            params.append(value)
+    query = "SELECT * FROM alert_identities WHERE " + " AND ".join(filters)
+    # A full pass or audit (floor_seq=0) walks the (tenant_id,id) index from
+    # the cursor. A delta pass reads only identities changed after floor_seq
+    # through the (tenant_id,current_projection_seq,id) index and sorts them:
+    # sequence statistics are global, so an ordered id walk can visit every
+    # unchanged identity of a tenant whose sequences are low; OFFSET 0 keeps
+    # the subquery from being flattened into one. Unprepared execution plans
+    # each page from its actual bounds, never a generic plan.
+    if floor_seq:
+        query = "SELECT * FROM (" + query + " OFFSET 0) changed"
+    if cursor is not None:
+        query += (" WHERE" if floor_seq else " AND") + " id>%s"
+        params.append(cursor)
+    # Only an explicit identity list keeps its caller's order.
+    if alert_ids is not None:
+        query += " ORDER BY array_position(%s::uuid[],id),id"
+        params.append(alert_ids)
+    else:
+        query += " ORDER BY id"
+    # A hint batch names its identities and may fill one writer bulk.
+    limit = PAGE_SIZE if alert_ids is None else BULK_DOCUMENTS
+    identities = conn.execute(query + " LIMIT %s", (*params, limit), prepare=False).fetchall()
     ids = [row["id"] for row in identities]
     if not ids:
         return []
@@ -222,6 +236,7 @@ def publish_page(
     *,
     fence=None,
     max_document_bytes=DEVELOPMENT_DOCUMENT_BYTES,
+    on_write=None,
 ):
     from .control import check_writer
 
@@ -262,7 +277,7 @@ def publish_page(
     # One byte-bounded bulk and one refresh-visible proof per turn. The caller
     # advances only this prefix, leaving the remainder available on the next turn.
     selected, size = [], 0
-    for item in items[:PAGE_SIZE]:
+    for item in items[:BULK_DOCUMENTS]:
         item_bytes = len(canonical(build_document(item))) + 512
         if selected and size + item_bytes > BULK_BYTES:
             break
@@ -270,9 +285,13 @@ def publish_page(
         size += item_bytes
         if size >= BULK_BYTES:
             break
-    ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes).publish(
-        selected, guard=guard, covered_by_newer=newer
-    )
+    writer = ProjectionWriter(client, physical_index, epoch, max_document_bytes=max_document_bytes)
+    try:
+        writer.publish(selected, guard=guard, covered_by_newer=newer)
+    finally:
+        # A bulk may have repaired documents even when its verification fails.
+        if writer.written and on_write:
+            on_write()
     return selected
 
 
@@ -386,9 +405,20 @@ def reconcile_page(
             (epoch, tenant),
         )
         if advance_serving:
+            # Every view-state update fires a live hint. An idle pass that neither
+            # advances, verifies nor completes the first full audit leaves it alone.
             conn.execute(
-                "UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),verified_at=clock_timestamp(),view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
-                (state["boundary_seq"], tenant, epoch),
+                """UPDATE tenant_view_state SET searchable_seq=greatest(searchable_seq,%s),
+                    verified_at=clock_timestamp(),view_generation=view_generation+1
+                    WHERE tenant_id=%s AND index_epoch=%s
+                        AND (searchable_seq<%s OR verified_at IS NULL OR %s)""",
+                (
+                    state["boundary_seq"],
+                    tenant,
+                    epoch,
+                    state["boundary_seq"],
+                    state["full_audit_at"] is None,
+                ),
             )
         return True
 
@@ -425,43 +455,64 @@ def audit_page(db, client, physical_index, tenant, epoch, *, max_document_bytes,
             ceiling_seq=state["audit_boundary_seq"],
             max_document_bytes=max_document_bytes,
         )
-    items = (
-        publish_page(
-            db,
-            client,
-            physical_index,
-            epoch,
-            items,
-            fence=fence,
-            max_document_bytes=max_document_bytes,
-        )
-        or []
-    )
-    with db.transaction() as conn:
-        fence(conn)
-        current = conn.execute(
-            "SELECT * FROM search_reconciliation WHERE index_epoch=%s AND tenant_id=%s FOR UPDATE",
-            (epoch, tenant),
-        ).fetchone()
-        check_claim(conn, epoch, tenant, claim)
-        fields = ("audit_boundary_seq", "audit_cursor", "audit_started_at")
-        if any(current[field] != state[field] for field in fields):
-            return False
-        if items:
-            conn.execute(
-                """UPDATE search_reconciliation SET audit_cursor=%s,
-                audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),audit_turns=0
-                WHERE index_epoch=%s AND tenant_id=%s""",
-                (items[-1].alert_id, epoch, tenant),
-            )
-            return False
+    repaired = []
+
+    def announce(conn):
+        # Repairs leave the watermark alone, but open feeds must still refetch.
         conn.execute(
-            """UPDATE search_reconciliation SET audit_cursor=NULL,audit_boundary_seq=NULL,
-            audit_started_at=NULL,audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),
-            full_audit_at=clock_timestamp(),audit_turns=0 WHERE index_epoch=%s AND tenant_id=%s""",
-            (epoch, tenant),
+            "UPDATE tenant_view_state SET view_generation=view_generation+1 WHERE tenant_id=%s AND index_epoch=%s",
+            (tenant, epoch),
         )
-        return True
+
+    try:
+        items = (
+            publish_page(
+                db,
+                client,
+                physical_index,
+                epoch,
+                items,
+                fence=fence,
+                max_document_bytes=max_document_bytes,
+                on_write=lambda: repaired.append(True),
+            )
+            or []
+        )
+        with db.transaction() as conn:
+            fence(conn)
+            current = conn.execute(
+                "SELECT * FROM search_reconciliation WHERE index_epoch=%s AND tenant_id=%s FOR UPDATE",
+                (epoch, tenant),
+            ).fetchone()
+            check_claim(conn, epoch, tenant, claim)
+            if repaired:
+                announce(conn)
+            fields = ("audit_boundary_seq", "audit_cursor", "audit_started_at")
+            if any(current[field] != state[field] for field in fields):
+                return False
+            if items:
+                conn.execute(
+                    """UPDATE search_reconciliation SET audit_cursor=%s,
+                    audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),audit_turns=0
+                    WHERE index_epoch=%s AND tenant_id=%s""",
+                    (items[-1].alert_id, epoch, tenant),
+                )
+                return False
+            conn.execute(
+                """UPDATE search_reconciliation SET audit_cursor=NULL,audit_boundary_seq=NULL,
+                audit_started_at=NULL,audit_page_at=clock_timestamp(),last_page_at=clock_timestamp(),
+                full_audit_at=clock_timestamp(),audit_turns=0 WHERE index_epoch=%s AND tenant_id=%s""",
+                (epoch, tenant),
+            )
+            return True
+    except Exception:
+        # A retry finds the repaired documents visible and would never announce
+        # them. Without the claim, announce them as long as this index is current.
+        if repaired:
+            with suppress(Exception), db.transaction() as conn:
+                check_writer(conn, physical_index, epoch)
+                announce(conn)
+        raise
 
 
 def check_claim(conn, epoch, tenant, owner):
@@ -532,7 +583,7 @@ class ProjectionService:
                             break
                         items.append(item)
                         size += item_bytes
-                    if full or size >= BULK_BYTES:
+                    if full or size >= BULK_BYTES or len(items) >= BULK_DOCUMENTS:
                         break
             published = (
                 publish_page(

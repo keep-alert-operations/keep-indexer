@@ -11,6 +11,7 @@ class ProjectionWriter:
     def __init__(self, client, index: str, index_epoch: str, *, max_document_bytes: int):
         self.client, self.index, self.index_epoch = client, index, index_epoch
         self.max_document_bytes = max_document_bytes
+        self.written = 0  # Documents the last publish sent; zero when all were visible.
 
     def publish(
         self,
@@ -19,6 +20,7 @@ class ProjectionWriter:
         guard: Callable[[Projection, dict, str], None],
         covered_by_newer: Callable[[Projection, dict], bool],
     ) -> VisibilityProof:
+        self.written = 0
         if not items or len(items) > 500:
             raise AppError("projection_batch_limit", "Projection batches contain 1–500 documents")
         latest = {}
@@ -82,6 +84,8 @@ class ProjectionWriter:
             ):
                 raise AppError("projection_batch_limit", "Projection batch exceeds 4 MiB")
             if operations:
+                # Counted before the call: a failed verification may follow a real write.
+                self.written = len(operations) // 2
                 response = self.client.bulk(operations=operations, refresh="wait_for")
                 assert_complete(response)
                 if len(response.get("items", [])) != len(operations) // 2:
