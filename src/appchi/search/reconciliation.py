@@ -15,7 +15,10 @@ from appchi.search.projection import Projection, build_document, canonical
 from appchi.search.text import source_tokens
 from appchi.search.writer import ProjectionWriter
 
+# Authority scan page; hint batches name their identities and may reach the
+# projection writer's per-bulk document limit instead.
 PAGE_SIZE = 50
+BULK_DOCUMENTS = 500
 BULK_BYTES = 4 * 1024 * 1024
 DEVELOPMENT_DOCUMENT_BYTES = 100 * 1024 * 1024
 log = logging.getLogger(__name__)
@@ -60,7 +63,9 @@ def current_page(
         params.append(alert_ids)
     else:
         query += " ORDER BY id"
-    identities = conn.execute(query + " LIMIT %s", (*params, PAGE_SIZE), prepare=False).fetchall()
+    # A hint batch names its identities and may fill one writer bulk.
+    limit = PAGE_SIZE if alert_ids is None else BULK_DOCUMENTS
+    identities = conn.execute(query + " LIMIT %s", (*params, limit), prepare=False).fetchall()
     ids = [row["id"] for row in identities]
     if not ids:
         return []
@@ -198,7 +203,7 @@ def publish_page(
     # One byte-bounded bulk and one refresh-visible proof per turn. The caller
     # advances only this prefix, leaving the remainder available on the next turn.
     selected, size = [], 0
-    for item in items[:PAGE_SIZE]:
+    for item in items[:BULK_DOCUMENTS]:
         item_bytes = len(canonical(build_document(item))) + 512
         if selected and size + item_bytes > BULK_BYTES:
             break
@@ -468,7 +473,7 @@ class ProjectionService:
                             break
                         items.append(item)
                         size += item_bytes
-                    if full or size >= BULK_BYTES:
+                    if full or size >= BULK_BYTES or len(items) >= BULK_DOCUMENTS:
                         break
             published = (
                 publish_page(
