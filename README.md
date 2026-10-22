@@ -34,7 +34,12 @@ Migration `0050_alert_notes_projection_lookup.sql` supplies the partial live-not
 lookup index used by projection pages. Pages probe for live notes with the alert
 query and open bounded note streams only for alerts that have them.
 The process reuses one Elasticsearch client for Kafka hints and authority scans.
-It publishes at most 50 current documents in a normal 4 MiB bulk, verifies one
+Authority scans publish pages of at most 50 current documents. Kafka hints from
+every busy partition share one bulk of at most 500 documents and 4 MiB; each
+partition commits only its own covered prefix. After a failed shared request,
+every non-head partition it included is left out of shared requests until it has
+handled every input it had in that request alone (or was fenced, revoked or lost), and no
+shared request is made while such a partition is the head. Each bulk verifies one
 refresh-visible result for the batch, and skips writes for already visible identical
 versions. A large individual document can use a separate request within the
 explicit document allocation; notes and their searchable tokens are not truncated.
