@@ -36,7 +36,10 @@ query and open bounded note streams only for alerts that have them.
 The process reuses one Elasticsearch client for Kafka hints and authority scans.
 Authority scans publish pages of at most 50 current documents. Kafka hints from
 every busy partition share one bulk of at most 500 documents and 4 MiB; each
-partition commits only its own covered prefix. Each bulk verifies one
+partition commits only its own covered prefix. After a failed shared request,
+every non-head partition it included is left out of shared requests until it has
+run alone once and its own batch succeeded (or it was fenced or revoked), and no
+shared request is made while such a partition is the head. Each bulk verifies one
 refresh-visible result for the batch, and skips writes for already visible identical
 versions. A large individual document can use a separate request within the
 explicit document allocation; notes and their searchable tokens are not truncated.
