@@ -490,7 +490,7 @@ class ProjectionService:
 
         Mirrors the claim predicate below. Returns 0 when a claim may succeed now
         (including view states without a reconciliation row) and None when no
-        tenant is registered. A closed search gate fails as the claim would;
+        reconciliation row exists (the statement's empty case yields NULL). A closed search gate fails as the claim would;
         writer fences (paused writers, epoch or binding changes) are still
         enforced by the writer lease that every claim takes.
         """
@@ -502,7 +502,7 @@ class ProjectionService:
                         WHERE NOT EXISTS(SELECT 1 FROM search_reconciliation r
                             WHERE r.index_epoch=v.index_epoch AND r.tenant_id=v.tenant_id))
                         AS unregistered,
-                    (SELECT CASE WHEN bool_or(d.due_at IS NULL) THEN 0
+                    (SELECT CASE WHEN count(*)=0 THEN NULL WHEN bool_or(d.due_at IS NULL) THEN 0
                         ELSE greatest(0,extract(epoch FROM min(d.due_at)-clock_timestamp())) END
                     FROM (SELECT greatest(
                         CASE WHEN r.completed_at IS NULL OR r.audit_started_at IS NOT NULL

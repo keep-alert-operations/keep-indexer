@@ -87,9 +87,11 @@ worker issues no statement until that time, rechecking at least once a second so
 new tenants, index epochs and gate changes are seen; it takes no lease, inserts
 no reconciliation row and runs no claim transaction. Due work still takes the
 writer lease, so paused or rebound writers stay fenced on every turn. Kafka hints
-are unaffected: the consumer's bounded poll keeps running each loop. During a
-Kafka outage the worker loop sleeps until the scan's next due time, at most one
-second, instead of 10 milliseconds.
+are unaffected: the consumer's bounded poll keeps running each loop. Waiting
+until the scan's next due time (at most one second) during a Kafka outage needs
+the appchi-domain worker loop revision from appchi-alert-operations/appchi-domain#10;
+until this repository pins it, an outage retries the transport every 10
+milliseconds, but the idle scan itself still issues no statement until due.
 
 Kafka handlers commit only a successfully covered contiguous partition prefix.
 A failed input pauses that partition for bounded retry at the same offset; other

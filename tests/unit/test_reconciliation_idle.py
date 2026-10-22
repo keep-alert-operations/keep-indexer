@@ -105,7 +105,7 @@ def test_idle_turns_take_no_lease_or_claim_until_the_next_due_time(idle):
 
 
 def test_recheck_is_bounded_when_nothing_is_registered_or_due_later(idle):
-    idle.db.due["due_in"] = None
+    idle.db.due["due_in"] = None  # No reconciliation rows: the statement yields NULL.
     assert idle.service.reconcile() == 0
     assert idle.service.idle_seconds() == reconciliation.IDLE_RECHECK_SECONDS
     idle.db.due["due_in"] = 30.0  # A claim held by another replica.
