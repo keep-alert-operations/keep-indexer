@@ -69,7 +69,8 @@ class Conn:
         self.cursors.append(cursor)
         return cursor
 
-    def execute(self, query, params):
+    def execute(self, query, params, **_options):
+        # Accepts execute options such as prepare=False from current_page.
         if "FROM alert_identities" in query:
             # An explicit identity list keeps the caller's order; scans use id order.
             requested = [value for value in params if isinstance(value, list)]
