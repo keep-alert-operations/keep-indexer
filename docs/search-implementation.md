@@ -35,8 +35,8 @@ refresh wait cover all of them. Each partition's offset advances only by its
 own covered prefix after the bulk is acknowledged and search-visible; a failed
 or unreached head partition is retried alone, where faults stay isolated.
 After a failed shared request, every non-head partition it included is left out
-of shared requests until it has run alone once and its own batch succeeded (or
-it was fenced or revoked), and no shared request is made while such a partition
+of shared requests until it has handled every input it had in that request alone
+(or was fenced, revoked or lost), and no shared request is made while such a partition
 is the head. A
 single large document keeps its explicitly allocated exception. It streams note
 text from PostgreSQL and retains only bounded distinct tokens during assembly.
