@@ -150,6 +150,8 @@ def test_failed_tenant_gets_retry_without_advancing_watermark(monkeypatch):
     class Connection:
         def execute(self, sql, params=()):
             queries.append((sql, params))
+            if "AS due_in" in sql:
+                return Mock(fetchone=lambda: {"ready": True, "unregistered": False, "due_in": 0})
             if "SELECT ready" in sql:
                 return Mock(fetchone=lambda: {"ready": True})
             if "RETURNING r.tenant_id" in sql:
@@ -157,7 +159,7 @@ def test_failed_tenant_gets_retry_without_advancing_watermark(monkeypatch):
             return Mock()
 
     @contextmanager
-    def transaction():
+    def transaction(*args, **kwargs):
         yield Connection()
 
     @contextmanager

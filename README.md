@@ -79,6 +79,18 @@ starting or completing work.
 Completed and empty ordinary passes update their scheduling timestamp so idle
 tenants yield to pending tenants instead of retaining permanent scan priority.
 
+Before taking a physical-index writer lease, a scan reads in one statement
+whether the search gate is open and when the next tenant becomes claimable (the
+same predicate as the claim: unfinished or audit passes, two seconds after a
+completed pass, claim expiry and `retry_after`). While nothing is due, the
+worker issues no statement until that time, rechecking at least once a second so
+new tenants, index epochs and gate changes are seen; it takes no lease, inserts
+no reconciliation row and runs no claim transaction. Due work still takes the
+writer lease, so paused or rebound writers stay fenced on every turn. Kafka hints
+are unaffected: the consumer's bounded poll keeps running each loop. During a
+Kafka outage the worker loop sleeps until the scan's next due time, at most one
+second, instead of 10 milliseconds.
+
 Kafka handlers commit only a successfully covered contiguous partition prefix.
 A failed input pauses that partition for bounded retry at the same offset; other
 partitions continue. Retention loss on source/correlation is a persistent partition
