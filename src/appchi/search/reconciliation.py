@@ -92,6 +92,85 @@ def current_page(
             (tenant, ids),
         )
     }
+    # Live notes are streamed for the whole page through one named cursor.
+    noted = [
+        identity["id"]
+        for identity in identities
+        if not identity["retired_at"] and (alerts.get(identity["id"]) or {}).get("has_live_notes")
+    ]
+    with PageNotes(conn, tenant, noted) as notes:
+        return page_items(identities, alerts, links, owners, notes, tenant, max_document_bytes)
+
+
+class PageNotes:
+    """Stream the live notes of a page's alerts through one named cursor.
+
+    One statement replaces a server-side cursor per alert. Rows arrive grouped
+    by alert in the page's identity order and by note id within an alert, so a
+    caller reads each alert's notes in turn while the client holds at most one
+    fetch batch. The cursor is opened only when a page alert has live notes.
+    """
+
+    ITERSIZE = 25
+
+    def __init__(self, conn, tenant, alert_ids):
+        self.conn, self.tenant, self.alert_ids = conn, tenant, list(alert_ids)
+        self.position = {alert: index for index, alert in enumerate(self.alert_ids)}
+        self.cursor = self.rows = self.pending = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        if self.cursor is not None:
+            self.cursor.close()
+
+    def open(self):
+        self.cursor = self.conn.cursor(name="projection_notes_" + uuid4().hex)
+        self.cursor.itersize = self.ITERSIZE
+        self.cursor.execute(*self.statement(self.tenant, self.alert_ids))
+        self.rows = iter(self.cursor)
+
+    @staticmethod
+    def statement(tenant, ids):
+        # Both forms read the partial (tenant_id,alert_id,id) notes index and
+        # never sort the whole page. Cursor scans list identities in id order,
+        # which one index scan over the id array returns directly.
+        if ids == sorted(ids):
+            return (
+                "SELECT alert_id,text FROM alert_notes WHERE tenant_id=%s"
+                " AND alert_id=ANY(%s::uuid[]) AND NOT deleted ORDER BY alert_id,id",
+                (tenant, ids),
+            )
+        # A caller-ordered list (Kafka order) is walked alert by alert: a
+        # nested loop probes the index per alert, so at most one alert's notes
+        # are ordered at a time (an incremental sort presorted by position).
+        return (
+            "SELECT u.alert_id,n.text FROM unnest(%s::uuid[]) WITH ORDINALITY u(alert_id,ord)"
+            " CROSS JOIN LATERAL (SELECT id,text FROM alert_notes WHERE tenant_id=%s"
+            " AND alert_id=u.alert_id AND NOT deleted ORDER BY id) n ORDER BY u.ord,n.id",
+            (ids, tenant),
+        )
+
+    def of(self, alert):
+        """Yield one alert's live note texts in note-id order."""
+        position = self.position[alert]
+        if self.cursor is None:
+            self.open()
+        while True:
+            if self.pending is None:
+                self.pending = next(self.rows, None)
+                if self.pending is None:
+                    return
+            row_position = self.position[self.pending["alert_id"]]
+            if row_position > position:
+                return
+            row, self.pending = self.pending, None
+            if row_position == position:
+                yield row["text"]
+
+
+def page_items(identities, alerts, links, owners, notes, tenant, max_document_bytes):
     items, page_bytes = [], 0
     for identity in identities:
         alert = identity["id"]
@@ -113,25 +192,18 @@ def current_page(
                 incident_ids=links[alert],
                 active_incident_id=owners.get(alert),
             )
-            # A named cursor avoids materializing every note of fifty alerts
-            # in the client. Keep only the distinct searchable tokens of this
-            # document, bounded by its explicit integration allocation.
+            # Keep only the distinct searchable tokens of this document,
+            # bounded by its explicit integration allocation.
             tokens = set(source_tokens([row["message"], row.get("impact") or ""]))
             token_bytes = sum(len(canonical(token)) + 1 for token in tokens)
             if has_live_notes:
-                with conn.cursor(name="projection_notes_" + uuid4().hex) as notes:
-                    notes.itersize = 25
-                    notes.execute(
-                        "SELECT text FROM alert_notes WHERE tenant_id=%s AND alert_id=%s AND NOT deleted ORDER BY id",
-                        (tenant, alert),
-                    )
-                    for note in notes:
-                        for token in source_tokens([note["text"]]):
-                            if token not in tokens:
-                                token_bytes += len(canonical(token)) + 1
-                                if token_bytes > max_document_bytes:
-                                    raise unavailable("projection_document_capacity")
-                                tokens.add(token)
+                for text in notes.of(alert):
+                    for token in source_tokens([text]):
+                        if token not in tokens:
+                            token_bytes += len(canonical(token)) + 1
+                            if token_bytes > max_document_bytes:
+                                raise unavailable("projection_document_capacity")
+                            tokens.add(token)
             token_values = tuple(sorted(tokens))
         item = Projection(
             str(tenant),
