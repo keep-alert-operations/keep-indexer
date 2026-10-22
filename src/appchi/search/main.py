@@ -1,12 +1,32 @@
 """Search indexer process entrypoint; PG reconciliation survives Kafka outages."""
 
+import inspect
+
+from appchi import kafka_changed
 from appchi.kafka_changed import ChangedConsumer
 from appchi.pipeline_runtime import run
 from appchi.search.consumer import index_record, index_batch, index_groups
 from appchi.search.reconciliation import BULK_DOCUMENTS, ReconciliationRunner
 
 
+def require_grouped_consumer():
+    """Refuse to start against an appchi-domain without grouped hint batches.
+
+    The transport is optional, so a consumer that rejects groups_handler would
+    otherwise fail inside the worker loop and leave Kafka hints silently off.
+    """
+    if (
+        "groups_handler" not in inspect.signature(ChangedConsumer).parameters
+        or getattr(kafka_changed, "MAX_BATCH", 0) < BULK_DOCUMENTS
+    ):
+        raise SystemExit(
+            "appchi-indexer requires appchi-domain with ChangedConsumer(groups_handler=...)"
+            f" and MAX_BATCH >= {BULK_DOCUMENTS}; update the appchi-domain dependency pin"
+        )
+
+
 def main():
+    require_grouped_consumer()
     run(
         "indexer",
         lambda db, settings, profile: ChangedConsumer(
