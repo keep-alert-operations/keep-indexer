@@ -729,7 +729,7 @@ class ProjectionService:
                         WHERE index_epoch=%s AND tenant_id=%s AND lease_owner=%s""",
                             (code, row["index_epoch"], row["tenant_id"], owner),
                         )
-                log.warning("search_tenant_reconciliation_failed", extra={"reason": code})
+                log.warning("search_tenant_reconciliation_failed reason=%s", code)
                 return 0
             with self.db.transaction() as conn:
                 cleared = (
