@@ -108,16 +108,40 @@ def check_empty_database(conn):
         raise unavailable("local_search_explicit_rebuild_required")
 
 
-def verify_mapping(client, physical):
+def verify_mapping(client, physical, meta=None):
     observed = client.indices.get_mapping(index=physical)[physical]["mappings"]
     expected = index_mapping()
     if (
         observed.get("dynamic") != "strict"
-        or observed.get("_meta") != expected["_meta"]
+        or observed.get("_meta") != (meta or expected["_meta"])
         or observed.get("properties") != expected["properties"]
         or observed.get("_source", {}).get("enabled", True) is not True
     ):
         raise unavailable("search_mapping_mismatch")
+
+
+def serving_index(conn, current, selected):
+    """The recorded serving index and its expected mapping metadata: the initial
+    index, or a target the rebuild CLI completed under this same local binding.
+
+    A mapping change that rewrites every document (REV-54) needs a rebuild, which
+    records its job and epoch in the new index's metadata.
+    """
+    meta = index_mapping()["_meta"]
+    if current is None or current["physical_index"] == PHYSICAL:
+        return PHYSICAL, meta
+    job = conn.execute(
+        "SELECT id,target_epoch FROM search_rebuild_jobs WHERE target_index=%s AND state='complete'",
+        (current["physical_index"],),
+    ).fetchone()
+    if (
+        not current["physical_index"].startswith(selected.index_prefix)
+        or not job
+        or job["target_epoch"] != current["index_epoch"]
+    ):
+        raise unavailable("local_search_binding_conflict")
+    meta.update(rebuild_id=str(job["id"]), index_epoch=job["target_epoch"])
+    return current["physical_index"], meta
 
 
 def bootstrap(db, client, settings, evidence):
@@ -132,10 +156,10 @@ def bootstrap(db, client, settings, evidence):
             current["writers_paused"]
             or current["active_rebuild_id"]
             or current["alias_name"] != ALIAS
-            or current["physical_index"] != PHYSICAL
             or current["binding_digest"] != selected.digest()
         ):
             raise unavailable("local_search_binding_conflict")
+        physical, meta = serving_index(conn, current, selected)
         epoch = current["index_epoch"] if current else str(uuid4())
         already_active = gate["ready"]
     if not client.indices.exists_alias(name=ALIAS):
@@ -147,9 +171,9 @@ def bootstrap(db, client, settings, evidence):
             settings=selected.index_settings,
             aliases={ALIAS: {}},
         )
-    if alias_target(client, ALIAS) != PHYSICAL:
+    if alias_target(client, ALIAS) != physical:
         raise unavailable("local_search_binding_conflict")
-    verify_mapping(client, PHYSICAL)
+    verify_mapping(client, physical, meta)
     if not current:
         # No documents can be imported implicitly into a fresh local authority.
         response = client.search(
@@ -163,7 +187,7 @@ def bootstrap(db, client, settings, evidence):
         if response["hits"]["total"] != {"value": 0, "relation": "eq"}:
             raise unavailable("local_search_unexpected_documents")
         bind_serving_index(db, client, selected, epoch)
-    verified = verify_empty_tenants(db, client, epoch)
+    verified = verify_empty_tenants(db, client, epoch, physical)
     with db.transaction() as conn:
         gate = check_initial_gate(conn)
         control = conn.execute(
@@ -191,7 +215,7 @@ def bootstrap(db, client, settings, evidence):
                             **evidence,
                             "index_epoch": epoch,
                             "alias": ALIAS,
-                            "physical_index": PHYSICAL,
+                            "physical_index": physical,
                             "scope": "isolated-local-development",
                             "production_qualified": False,
                         }
@@ -205,7 +229,7 @@ def bootstrap(db, client, settings, evidence):
     }
 
 
-def verify_empty_tenants(db, client, epoch):
+def verify_empty_tenants(db, client, epoch, physical=PHYSICAL):
     with db.transaction() as conn:
         tenants = conn.execute(
             "SELECT v.tenant_id FROM tenant_view_state v JOIN tenant_work_state w USING(tenant_id) "
@@ -216,7 +240,7 @@ def verify_empty_tenants(db, client, epoch):
     for row in tenants:
         tenant = row["tenant_id"]
         response = client.search(
-            index=PHYSICAL,
+            index=physical,
             query={"term": {"tenant_id": str(tenant)}},
             size=0,
             track_total_hits=True,
@@ -236,7 +260,7 @@ def verify_empty_tenants(db, client, epoch):
                 or control["index_epoch"] != epoch
                 or control["writers_paused"]
                 or control["active_rebuild_id"]
-                or control["physical_index"] != PHYSICAL
+                or control["physical_index"] != physical
             ):
                 raise unavailable("local_search_binding_changed")
             if state["blocked"] or state["projection_seq"] != 0:

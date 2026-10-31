@@ -11,6 +11,7 @@ import logging
 from time import monotonic
 from uuid import uuid4
 
+from appchi.cel.catalog import alert_name
 from appchi.shared.errors import unavailable
 from appchi.serialization import wire
 from appchi.search.projection import Projection, build_document, canonical
@@ -197,7 +198,10 @@ def page_items(identities, alerts, links, owners, notes, tenant, max_document_by
             )
             # Keep only the distinct searchable tokens of this document,
             # bounded by its explicit integration allocation.
-            tokens = set(source_tokens([row["message"], row.get("impact") or ""]))
+            # The same sources as build_document, including the effective name (REV-54).
+            tokens = set(
+                source_tokens([row["message"], row.get("impact") or "", alert_name(row) or ""])
+            )
             token_bytes = sum(len(canonical(token)) + 1 for token in tokens)
             if has_live_notes:
                 for text in notes.of(alert):

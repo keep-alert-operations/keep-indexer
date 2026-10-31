@@ -55,5 +55,9 @@ to conceal an unresolved switch. A full PostgreSQL rollback restore still requir
 the separate independent evidence/session/credential reconciliation workflow;
 a successful search rebuild alone does not establish safe restore readiness.
 
+The isolated local development stack uses the same CLI with its fixed local binding;
+its search bootstrap then accepts the completed target index. See delivery's local
+runtime guide, "Search mapping changes".
+
 Adapter references: [Elastic aliases](https://www.elastic.co/guide/en/elasticsearch/reference/current/aliases.html)
 and [atomic alias action API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-update-aliases).

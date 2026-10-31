@@ -10,6 +10,7 @@ from appchi.search.local_bootstrap import (
     ALIAS,
     PHYSICAL,
     REASON,
+    binding,
     bootstrap,
     check_initial_gate,
     compatibility_evidence,
@@ -163,3 +164,68 @@ def test_empty_proof_rechecks_projection_after_external_query(monkeypatch):
     assert not any(
         "UPDATE tenant_view_state" in call.args[0] for call in conn.execute.call_args_list
     )
+
+
+JOB = "00000000-0000-4000-8000-000000000001"
+
+
+def rebuilt(physical, job=None, meta=None):
+    """A database whose serving index is the given one, with the local binding."""
+    restore = {"fenced": False, "run_id": None}
+    gate = {"ready": True, "reason": REASON}
+    control = {
+        "index_epoch": "epoch",
+        "writers_paused": False,
+        "active_rebuild_id": None,
+        "alias_name": ALIAS,
+        "physical_index": physical,
+        "binding_digest": binding().digest(),
+    }
+    conn = MagicMock()
+    rows = [restore, gate, control, job, restore, gate, control]
+    conn.execute.return_value.fetchone.side_effect = rows
+    conn.execute.return_value.fetchall.return_value = []
+    db = MagicMock()
+    db.transaction.return_value.__enter__.return_value = conn
+    client = MagicMock()
+    client.indices.exists_alias.return_value = True
+    client.indices.get_alias.return_value = {physical: {"aliases": {ALIAS: {}}}}
+    mapping = index_mapping()
+    mapping["_meta"].update(meta or {})
+    client.indices.get_mapping.return_value = {physical: {"mappings": mapping}}
+    return db, client
+
+
+def test_accepts_an_index_rebuilt_under_the_local_binding():
+    """Requirements: alerts technical 6, 25 (REV-54)."""
+    physical = binding().index_prefix + JOB
+    stamp = {"rebuild_id": JOB, "index_epoch": "epoch"}
+    db, client = rebuilt(physical, {"id": JOB, "target_epoch": "epoch"}, stamp)
+    assert bootstrap(db, client, settings(), {})["state"] == "already_active"
+    client.indices.get_mapping.assert_called_with(index=physical)
+    client.indices.create.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "physical,job",
+    [
+        ("shared-alerts-1", {"id": JOB, "target_epoch": "epoch"}),
+        (ALIAS + "-" + JOB, None),
+        (ALIAS + "-" + JOB, {"id": JOB, "target_epoch": "older-epoch"}),
+    ],
+)
+def test_rejects_a_serving_index_no_completed_local_rebuild_produced(physical, job):
+    """Requirements: alerts technical 25 (REV-54)."""
+    db, client = rebuilt(physical, job)
+    with pytest.raises(AppError) as error:
+        bootstrap(db, client, settings(), {})
+    assert error.value.code == "local_search_binding_conflict"
+    client.indices.create.assert_not_called()
+
+
+def test_rebuilt_index_must_carry_its_rebuild_metadata():
+    """Requirements: alerts technical 25 (REV-54)."""
+    db, client = rebuilt(binding().index_prefix + JOB, {"id": JOB, "target_epoch": "epoch"})
+    with pytest.raises(AppError) as error:
+        bootstrap(db, client, settings(), {})
+    assert error.value.code == "search_mapping_mismatch"
