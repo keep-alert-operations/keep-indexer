@@ -62,7 +62,8 @@ def test_real_native_es_equivalence_pit_and_tombstone(real_search, cipher):
     }
     snapshots = [
         dict(base, id=ids[0], node_name=None, message="😀" * 8192),
-        dict(base, id=ids[1], node_name="a*?", message="case DIFFERENT"),
+        # REV-54: the first is unnamed (named by key_field), the second named.
+        dict(base, id=ids[1], node_name="a*?", message="case DIFFERENT", name="Disk full"),
     ]
     items = [Projection(tenant, i + 1, ids[i], 1, snapshots[i]) for i in range(2)]
     writer = ProjectionWriter(client, index, "test-epoch", max_document_bytes=1024 * 1024)
@@ -90,6 +91,9 @@ def test_real_native_es_equivalence_pit_and_tombstone(real_search, cipher):
         'alert.message.contains("😀")',
         'alert.time_created >= now() - duration("1s")',
         "alert.occurrence_number in [1,2]",
+        'name == "key"',
+        'name.startsWith("Disk")',
+        "name != null",
     ]
     for source in expressions:
         expr = compile_expression(source)
@@ -97,6 +101,8 @@ def test_real_native_es_equivalence_pit_and_tombstone(real_search, cipher):
         page = service.page(expr, scope)
         assert {doc["id"] for doc in page.items} == expected
         assert page.total == len(expected)
+    named = service.page(compile_expression("true"), scope, q="disk")
+    assert [doc["id"] for doc in named.items] == [ids[1]]
     page = service.page(compile_expression("true"), scope, page_size=1, q="STRASSE")
     assert page.total == 2 and page.next_cursor
     second = service.page(
