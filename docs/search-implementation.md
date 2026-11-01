@@ -1,6 +1,6 @@
 # Search adapter implementation
 
-`backend/appchi/search` uses the official Elasticsearch Python client's public
+`src/appchi/search` uses the official Elasticsearch Python client's public
 bulk, search, PIT and index-mapping APIs. It does not substitute an in-memory
 search engine, post-filter all tenant alerts, use scripts or send user query DSL.
 
@@ -91,7 +91,7 @@ absolute expiry, purge holes, partial failures and visibility proof. These
 tests use client mocks to exercise control flow and are not service evidence.
 
 The opt-in real-service test is
-`backend/tests/compatibility/test_search_elasticsearch.py`. Set
+`tests/compatibility/test_search_elasticsearch.py`. Set
 `APPCHI_TEST_ELASTICSEARCH_URL` to an isolated real Elasticsearch endpoint;
 it creates and deletes only a uniquely named `appchi-test-*` index. It tests
 native-CEL/Elasticsearch result parity, full-length supplementary-Unicode message

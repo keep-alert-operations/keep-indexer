@@ -7,7 +7,7 @@ Settings and their configured TLS trust. It does not set readiness gates to true
 
 Supply a JSON binding with profile `appchi-es-rebuild-v1`, exact `alias`, an
 owner-approved `index_prefix`, `capability_evidence`, `atomic_alias_switch: true`,
-`exclusive_alias_writer: true`, `max_document_bytes` (1024–1048576), and explicit
+`exclusive_alias_writer: true`, `max_document_bytes` (1024–104857600), and explicit
 `index_settings`. The settings describe the owning team's supplied allocation;
 Appchi does not select its production shard/replica/lifecycle policy. The evidence
 must establish exclusive control of this alias and supported atomic remove/add.
@@ -17,10 +17,10 @@ not evidence. `APPCHI_ELASTICSEARCH_INDEX` must be the binding's alias.
 Initialize an existing, exclusively owned alias and physical index once:
 
 ```powershell
-backend/.venv/Scripts/python.exe -m appchi.search.rebuild_cli --binding <binding.json> bind --epoch <fresh-uuid>
-backend/.venv/Scripts/python.exe -m appchi.search.rebuild_cli --binding <binding.json> start
-backend/.venv/Scripts/python.exe -m appchi.search.rebuild_cli --binding <binding.json> resume <returned-job-uuid>
-backend/.venv/Scripts/python.exe -m appchi.search.rebuild_cli --binding <binding.json> status <job-uuid>
+python -m appchi.search.rebuild_cli --binding <binding.json> bind --epoch <fresh-uuid>
+python -m appchi.search.rebuild_cli --binding <binding.json> start
+python -m appchi.search.rebuild_cli --binding <binding.json> resume <returned-job-uuid>
+python -m appchi.search.rebuild_cli --binding <binding.json> status <job-uuid>
 ```
 
 Use `resume <job> --once` for one bounded page/state transition. Restart the same
