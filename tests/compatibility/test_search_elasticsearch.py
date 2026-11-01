@@ -63,7 +63,16 @@ def test_real_native_es_equivalence_pit_and_tombstone(real_search, cipher):
     snapshots = [
         dict(base, id=ids[0], node_name=None, message="😀" * 8192),
         # REV-54: the first is unnamed (named by key_field), the second named.
-        dict(base, id=ids[1], node_name="a*?", message="case DIFFERENT", name="Disk full"),
+        # REV-55: the first predates providers, the second came from Grafana.
+        dict(
+            base,
+            id=ids[1],
+            node_name="a*?",
+            message="case DIFFERENT",
+            name="Disk full",
+            provider="grafana",
+            alert_rule_url="https://grafana.example.org/alerting/grafana/disk/view",
+        ),
     ]
     items = [Projection(tenant, i + 1, ids[i], 1, snapshots[i]) for i in range(2)]
     writer = ProjectionWriter(client, index, "test-epoch", max_document_bytes=1024 * 1024)
@@ -94,6 +103,10 @@ def test_real_native_es_equivalence_pit_and_tombstone(real_search, cipher):
         'name == "key"',
         'name.startsWith("Disk")',
         "name != null",
+        'provider == "grafana"',
+        "provider == null",
+        'alert_rule_url.startsWith("https://grafana.")',
+        "alert_rule_url == null",
     ]
     for source in expressions:
         expr = compile_expression(source)
