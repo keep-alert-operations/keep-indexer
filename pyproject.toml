@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Current-alert Elasticsearch projection, PostgreSQL reconciliation and index rebuild operations."
 requires-python = ">=3.13,<3.14"
 dependencies = [
-  "appchi-domain[runtime] @ git+https://github.com/appchi-alert-operations/appchi-domain.git@40e5b17780dbd509632cda9919d392675ac910de"
+  "appchi-domain[runtime] @ git+https://github.com/appchi-alert-operations/appchi-domain.git@d8229aee1bac68b0e6969bf3c3578e23fd32bec8"
 ]
 
 [dependency-groups]
