@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from pydantic import SecretStr
 import pytest
 
-from appchi.search.local_bootstrap import (
+from keep.search.local_bootstrap import (
     ALIAS,
     PHYSICAL,
     REASON,
@@ -18,8 +18,8 @@ from appchi.search.local_bootstrap import (
     verify_empty_tenants,
     verify_mapping,
 )
-from appchi.search.projection import index_mapping
-from appchi.shared.errors import AppError
+from keep.search.projection import index_mapping
+from keep.shared.errors import AppError
 
 
 def settings(**changes):
@@ -27,7 +27,7 @@ def settings(**changes):
         environment="development",
         elasticsearch_url="http://127.0.0.1:59200",
         elasticsearch_index=ALIAS,
-        database_url=SecretStr("postgresql://worker@127.0.0.1:55432/appchi_local"),
+        database_url=SecretStr("postgresql://worker@127.0.0.1:55432/keep_local"),
     )
     values.update(changes)
     return SimpleNamespace(**values)
@@ -41,8 +41,8 @@ def settings(**changes):
         {"elasticsearch_url": "http://localhost:59200/proxy"},
         {"elasticsearch_index": "shared-alerts"},
         {"database_url": SecretStr("postgresql://worker@localhost/shared")},
-        {"database_url": SecretStr("dbname=appchi_local host=localhost hostaddr=192.0.2.1")},
-        {"database_url": SecretStr("dbname=appchi_local host=localhost service=shared")},
+        {"database_url": SecretStr("dbname=keep_local host=localhost hostaddr=192.0.2.1")},
+        {"database_url": SecretStr("dbname=keep_local host=localhost service=shared")},
     ],
 )
 def test_rejects_nonisolated_settings(changes):
@@ -155,10 +155,10 @@ def test_empty_proof_rechecks_projection_after_external_query(monkeypatch):
     client = MagicMock()
     client.search.return_value = {"hits": {"total": {"value": 0, "relation": "eq"}}}
     monkeypatch.setattr(
-        "appchi.search.local_bootstrap.coordinator",
+        "keep.search.local_bootstrap.coordinator",
         lambda *args: ({"blocked": False, "projection_seq": 1}, None),
     )
-    monkeypatch.setattr("appchi.search.local_bootstrap.check_initial_gate", lambda *args: None)
+    monkeypatch.setattr("keep.search.local_bootstrap.check_initial_gate", lambda *args: None)
     assert verify_empty_tenants(db, client, "epoch") == 0
     assert client.search.call_args.kwargs["allow_partial_search_results"] is False
     assert not any(

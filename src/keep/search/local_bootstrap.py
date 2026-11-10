@@ -11,13 +11,13 @@ import xml.etree.ElementTree as ET
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 
-from appchi.recovery.guard import RESTORE_LOCK
-from appchi.search.projection import assert_complete, index_mapping
-from appchi.search.rebuild import RebuildBinding, alias_target, bind_serving_index
-from appchi.shared.errors import AppError, unavailable
-from appchi.shared.transactions import coordinator
+from keep.recovery.guard import RESTORE_LOCK
+from keep.search.projection import assert_complete, index_mapping
+from keep.search.rebuild import RebuildBinding, alias_target, bind_serving_index
+from keep.shared.errors import AppError, unavailable
+from keep.shared.transactions import coordinator
 
-ALIAS = "appchi-local-alerts"
+ALIAS = "keep-local-alerts"
 PHYSICAL = ALIAS + "-v1"
 REASON = "local_search_compatibility_verified"
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
@@ -36,7 +36,7 @@ def validate_local(settings):
         or endpoint.query
         or endpoint.fragment
         or settings.elasticsearch_index != ALIAS
-        or database.get("dbname") != "appchi_local"
+        or database.get("dbname") != "keep_local"
         or database.get("host") not in LOOPBACK
         or database.get("hostaddr", database.get("host")) not in LOOPBACK
         or database.get("service")
@@ -279,9 +279,9 @@ def verify_empty_tenants(db, client, epoch, physical=PHYSICAL):
 
 def main():
     from elasticsearch import Elasticsearch
-    from appchi.config import Settings
-    from appchi.db import Database
-    from appchi.service_clients import elasticsearch_options
+    from keep.config import Settings
+    from keep.db import Database
+    from keep.service_clients import elasticsearch_options
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, required=True)

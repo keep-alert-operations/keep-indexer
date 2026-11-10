@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from appchi.search import control, reconciliation
-from appchi.shared.errors import AppError, unavailable
+from keep.search import control, reconciliation
+from keep.shared.errors import AppError, unavailable
 
 
 class Clock:

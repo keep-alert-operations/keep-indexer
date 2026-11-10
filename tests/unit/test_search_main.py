@@ -1,13 +1,13 @@
-"""The indexer needs an appchi-domain consumer that accepts grouped hint batches."""
+"""The indexer needs an keep-domain consumer that accepts grouped hint batches."""
 
 import inspect
 
 import pytest
 
-from appchi import kafka_changed
-from appchi.kafka_changed import ChangedConsumer
-from appchi.search import main
-from appchi.search.reconciliation import BULK_DOCUMENTS
+from keep import kafka_changed
+from keep.kafka_changed import ChangedConsumer
+from keep.search import main
+from keep.search.reconciliation import BULK_DOCUMENTS
 
 
 def test_pinned_domain_accepts_grouped_batches_up_to_the_bulk_limit():

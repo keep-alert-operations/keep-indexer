@@ -5,10 +5,10 @@ from uuid import UUID
 
 import pytest
 
-from appchi.search import reconciliation
-from appchi.search.projection import Projection
-from appchi.search.text import source_tokens
-from appchi.shared.errors import AppError
+from keep.search import reconciliation
+from keep.search.projection import Projection
+from keep.search.text import source_tokens
+from keep.shared.errors import AppError
 
 TENANT = UUID(int=7)
 NOW = datetime(2026, 10, 6, tzinfo=UTC)

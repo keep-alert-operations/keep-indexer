@@ -1,6 +1,6 @@
 # Search adapter implementation
 
-`src/appchi/search` uses the official Elasticsearch Python client's public
+`src/keep/search` uses the official Elasticsearch Python client's public
 bulk, search, PIT and index-mapping APIs. It does not substitute an in-memory
 search engine, post-filter all tenant alerts, use scripts or send user query DSL.
 
@@ -73,7 +73,7 @@ closes PITs best-effort; a successful replacement can dispose the previous
 cursor. Keep-alive is capped by the remaining absolute cursor lifetime.
 The reader returns dependency errors instead of false zeroes.
 
-Assistant-selected implementation profile `appchi-text-unicode15.1-v1` pins
+Assistant-selected implementation profile `keep-text-unicode15.1-v1` pins
 Unicode 15.1.0, the data version supplied by the pinned Python 3.13 runtime.
 Text queries tokenize letter/mark/number/underscore runs, apply full case folding
 without normalization and AND distinct tokens across message, impact and current
@@ -92,8 +92,8 @@ tests use client mocks to exercise control flow and are not service evidence.
 
 The opt-in real-service test is
 `tests/compatibility/test_search_elasticsearch.py`. Set
-`APPCHI_TEST_ELASTICSEARCH_URL` to an isolated real Elasticsearch endpoint;
-it creates and deletes only a uniquely named `appchi-test-*` index. It tests
+`KEEP_TEST_ELASTICSEARCH_URL` to an isolated real Elasticsearch endpoint;
+it creates and deletes only a uniquely named `keep-test-*` index. It tests
 native-CEL/Elasticsearch result parity, full-length supplementary-Unicode message
 search, PIT pagination, full-text folding and tombstone version fences.
 It was skipped locally because no test endpoint was supplied. No Elasticsearch
@@ -111,14 +111,14 @@ this test at an index used by the company application.
 ```powershell
 poetry check --lock
 poetry sync --all-extras
-$env:APPCHI_TEST_ELASTICSEARCH_URL = 'https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
+$env:KEEP_TEST_ELASTICSEARCH_URL = 'https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
 poetry run python -m pytest tests/compatibility/test_search_elasticsearch.py -v
 ```
 
 ```sh
 poetry check --lock
 poetry sync --all-extras
-export APPCHI_TEST_ELASTICSEARCH_URL='https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
+export KEEP_TEST_ELASTICSEARCH_URL='https://SUPPLIED-ISOLATED-TEST-ENDPOINT'
 poetry run python -m pytest tests/compatibility/test_search_elasticsearch.py -v
 ```
 
