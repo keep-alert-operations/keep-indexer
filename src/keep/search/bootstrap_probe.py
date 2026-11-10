@@ -9,14 +9,14 @@ from hashlib import sha256
 import os
 from uuid import uuid4
 
-from appchi.cel import compile_expression
-from appchi.search import Projection, SearchReader, SearchScope, SearchState
-from appchi.search.counts import CountReader, CountState
-from appchi.search.projection import build_document, canonical, index_mapping
-from appchi.search.rebuild import alias_target
-from appchi.search.writer import ProjectionWriter
-from appchi.shared.crypto import EnvelopeCipher
-from appchi.shared.errors import unavailable
+from keep.cel import compile_expression
+from keep.search import Projection, SearchReader, SearchScope, SearchState
+from keep.search.counts import CountReader, CountState
+from keep.search.projection import build_document, canonical, index_mapping
+from keep.search.rebuild import alias_target
+from keep.search.writer import ProjectionWriter
+from keep.shared.crypto import EnvelopeCipher
+from keep.shared.errors import unavailable
 
 
 def target_identity(client):
@@ -104,7 +104,7 @@ def qualify(client, binding, intent):
     finally:
         cleanup()  # Failure or uncertain cleanup must not activate the search gate.
     return {
-        "profile": "appchi-development-bootstrap-probe-v1",
+        "profile": "keep-development-bootstrap-probe-v1",
         "started_at": started.isoformat(),
         "completed_at": datetime.now(UTC).isoformat(),
         "target": observed,

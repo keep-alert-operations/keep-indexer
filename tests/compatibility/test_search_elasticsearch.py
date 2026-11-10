@@ -7,27 +7,27 @@ from uuid import uuid4
 from elasticsearch import Elasticsearch
 import pytest
 
-from appchi.cel import compile_expression
-from appchi.search import Projection, SearchReader, SearchScope, SearchState, index_mapping
-from appchi.search.writer import ProjectionWriter
+from keep.cel import compile_expression
+from keep.search import Projection, SearchReader, SearchScope, SearchState, index_mapping
+from keep.search.writer import ProjectionWriter
 
 pytestmark = pytest.mark.compatibility
 
 
 @pytest.fixture
 def real_search():
-    endpoint = os.environ.get("APPCHI_TEST_ELASTICSEARCH_URL")
+    endpoint = os.environ.get("KEEP_TEST_ELASTICSEARCH_URL")
     if not endpoint:
-        pytest.skip("Set APPCHI_TEST_ELASTICSEARCH_URL to an isolated real Elasticsearch service")
-    ca = os.environ.get("APPCHI_TEST_ELASTICSEARCH_CA")
-    api_key = os.environ.get("APPCHI_TEST_ELASTICSEARCH_API_KEY")
+        pytest.skip("Set KEEP_TEST_ELASTICSEARCH_URL to an isolated real Elasticsearch service")
+    ca = os.environ.get("KEEP_TEST_ELASTICSEARCH_CA")
+    api_key = os.environ.get("KEEP_TEST_ELASTICSEARCH_API_KEY")
     client = Elasticsearch(
         endpoint,
         request_timeout=10,
         **({"ca_certs": ca} if ca else {}),
         **({"api_key": api_key} if api_key else {}),
     )
-    index = "appchi-test-" + uuid4().hex
+    index = "keep-test-" + uuid4().hex
     client.indices.create(index=index, mappings=index_mapping())
     yield client, index
     client.indices.delete(index=index)

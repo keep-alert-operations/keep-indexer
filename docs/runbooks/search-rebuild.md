@@ -5,26 +5,26 @@ source lifecycle or correlation. Run the CLI from a privileged application worke
 inside the supplied environment. It uses the normal PostgreSQL/Elasticsearch
 Settings and their configured TLS trust. It does not set readiness gates to true.
 
-Supply a JSON binding with profile `appchi-es-rebuild-v1`, exact `alias`, an
+Supply a JSON binding with profile `keep-es-rebuild-v1`, exact `alias`, an
 owner-approved `index_prefix`, `capability_evidence`, `atomic_alias_switch: true`,
 `exclusive_alias_writer: true`, `max_document_bytes` (1024–104857600), and explicit
 `index_settings`. The settings describe the owning team's supplied allocation;
-Appchi does not select its production shard/replica/lifecycle policy. The evidence
+Keep does not select its production shard/replica/lifecycle policy. The evidence
 must establish exclusive control of this alias and supported atomic remove/add.
 These assertions require environment qualification; a valid JSON file alone is
-not evidence. `APPCHI_ELASTICSEARCH_INDEX` must be the binding's alias.
+not evidence. `KEEP_ELASTICSEARCH_INDEX` must be the binding's alias.
 
 Initialize an existing, exclusively owned alias and physical index once:
 
 ```powershell
-python -m appchi.search.rebuild_cli --binding <binding.json> bind --epoch <fresh-uuid>
-python -m appchi.search.rebuild_cli --binding <binding.json> start
-python -m appchi.search.rebuild_cli --binding <binding.json> resume <returned-job-uuid>
-python -m appchi.search.rebuild_cli --binding <binding.json> status <job-uuid>
+python -m keep.search.rebuild_cli --binding <binding.json> bind --epoch <fresh-uuid>
+python -m keep.search.rebuild_cli --binding <binding.json> start
+python -m keep.search.rebuild_cli --binding <binding.json> resume <returned-job-uuid>
+python -m keep.search.rebuild_cli --binding <binding.json> status <job-uuid>
 ```
 
 Use `resume <job> --once` for one bounded page/state transition. Restart the same
-job after interruption. Optional `APPCHI_WORKER_HEALTH_PATH` supplies the standard
+job after interruption. Optional `KEEP_WORKER_HEALTH_PATH` supplies the standard
 worker probes. Initial bind resets claimed searchable progress; ordinary indexers
 verify it against the captured physical index. The CLI never creates an initial
 alias by guessing a service team's allocation or overwrites an unexpected target.

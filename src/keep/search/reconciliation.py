@@ -11,12 +11,12 @@ import logging
 from time import monotonic
 from uuid import uuid4
 
-from appchi.cel.catalog import alert_name
-from appchi.shared.errors import unavailable
-from appchi.serialization import wire
-from appchi.search.projection import Projection, build_document, canonical
-from appchi.search.text import source_tokens
-from appchi.search.writer import ProjectionWriter
+from keep.cel.catalog import alert_name
+from keep.shared.errors import unavailable
+from keep.serialization import wire
+from keep.search.projection import Projection, build_document, canonical
+from keep.search.text import source_tokens
+from keep.search.writer import ProjectionWriter
 
 # Authority scan page; hint batches name their identities and may reach the
 # projection writer's per-bulk document limit instead.
@@ -544,7 +544,7 @@ class ProjectionService:
 
     def __init__(self, db, settings, profile=None):
         from elasticsearch import Elasticsearch
-        from appchi.service_clients import elasticsearch_options
+        from keep.service_clients import elasticsearch_options
 
         self.db, self.settings = db, settings
         self.max_document_bytes = document_allocation(settings, profile)
@@ -751,10 +751,10 @@ class ProjectionService:
 
 
 def service_for(db, settings, profile=None):
-    service = getattr(db, "_appchi_projection_service", None)
+    service = getattr(db, "_keep_projection_service", None)
     if service is None:
         service = ProjectionService(db, settings, profile)
-        db._appchi_projection_service = service
+        db._keep_projection_service = service
     return service
 
 
@@ -770,7 +770,7 @@ class ReconciliationRunner:
         import json
 
         if self.service is None:
-            self.service = getattr(db, "_appchi_projection_service", None)
+            self.service = getattr(db, "_keep_projection_service", None)
         if self.service is None:
             profile = (
                 json.loads(settings.capacity_profile.read_text())

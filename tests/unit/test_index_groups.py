@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-from appchi.search import consumer
+from keep.search import consumer
 
 
 def hint(tenant, alert, *, key=None, value=None):

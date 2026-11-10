@@ -1,8 +1,8 @@
 from uuid import UUID
-from appchi.event_models import ChangedEnvelope
-from appchi.ingestion.native import parse_json
-from appchi.shared.errors import unavailable
-from appchi.search.reconciliation import service_for
+from keep.event_models import ChangedEnvelope
+from keep.ingestion.native import parse_json
+from keep.shared.errors import unavailable
+from keep.search.reconciliation import service_for
 
 
 def index_record(db, settings, profile, message):

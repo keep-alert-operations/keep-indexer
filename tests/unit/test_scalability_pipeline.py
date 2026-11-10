@@ -5,14 +5,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from appchi.search.projection import Projection, build_document
-from appchi.search.reconciliation import (
+from keep.search.projection import Projection, build_document
+from keep.search.reconciliation import (
     DEVELOPMENT_DOCUMENT_BYTES,
     document_allocation,
     publish_page,
 )
-from appchi.search.writer import ProjectionWriter
-from appchi.shared.errors import AppError, unavailable
+from keep.search.writer import ProjectionWriter
+from keep.shared.errors import AppError, unavailable
 
 
 def snapshot(notes=()):
@@ -98,7 +98,7 @@ def test_bulk_waits_for_one_refresh_for_fifty_documents():
 
 
 def test_write_is_reported_when_verification_after_bulk_fails(monkeypatch):
-    from appchi.search import reconciliation
+    from keep.search import reconciliation
 
     items = [Projection("tenant", 1, str(i), 1, {"deleted": True}) for i in range(3)]
     client = Mock()
@@ -155,7 +155,7 @@ def test_document_allocation_is_explicit_outside_development():
 
 
 def test_publish_page_splits_by_bytes_and_does_not_advance_over_tail(monkeypatch):
-    from appchi.search import reconciliation
+    from keep.search import reconciliation
 
     monkeypatch.setattr(reconciliation, "BULK_BYTES", 2500)
     items = [Projection("tenant", 1, str(i), 1, {"deleted": True}) for i in range(8)]
@@ -169,7 +169,7 @@ def test_publish_page_splits_by_bytes_and_does_not_advance_over_tail(monkeypatch
 
 
 def test_failed_tenant_gets_retry_without_advancing_watermark(monkeypatch):
-    from appchi.search import reconciliation, control
+    from keep.search import reconciliation, control
 
     queries = []
 
@@ -236,7 +236,7 @@ def test_one_bulk_and_one_refresh_wait_cover_the_writer_document_limit():
 
 
 def test_publish_page_selects_up_to_500_documents_within_4_mib(monkeypatch):
-    from appchi.search import reconciliation
+    from keep.search import reconciliation
 
     writer = Mock()
     monkeypatch.setattr(reconciliation, "ProjectionWriter", writer)
@@ -256,7 +256,7 @@ def test_publish_page_selects_up_to_500_documents_within_4_mib(monkeypatch):
 
 
 def test_project_many_stops_assembling_at_the_document_limit(monkeypatch):
-    from appchi.search import control, reconciliation
+    from keep.search import control, reconciliation
 
     @contextmanager
     def lease(db, settings):

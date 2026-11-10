@@ -12,12 +12,12 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from appchi.clock_health import require_clock_health
-from appchi.recovery.guard import runtime_guard
-from appchi.search.bootstrap_probe import owned_mapping, qualify, target_identity, verify_mapping
-from appchi.search.projection import assert_complete, canonical, index_mapping
-from appchi.search.rebuild import HOLD_LOCK, RebuildBinding, alias_target
-from appchi.shared.errors import AppError, unavailable
+from keep.clock_health import require_clock_health
+from keep.recovery.guard import runtime_guard
+from keep.search.bootstrap_probe import owned_mapping, qualify, target_identity, verify_mapping
+from keep.search.projection import assert_complete, canonical, index_mapping
+from keep.search.rebuild import HOLD_LOCK, RebuildBinding, alias_target
+from keep.shared.errors import AppError, unavailable
 
 PENDING = "development_search_bootstrap_in_progress"
 ACTIVE = "development_search_diagnostics_verified"
@@ -336,9 +336,9 @@ def bootstrap(db, client, settings, binding, *, physical, epoch, reference, stop
 
 def main():
     from elasticsearch import Elasticsearch
-    from appchi.config import Settings
-    from appchi.db import Database
-    from appchi.service_clients import elasticsearch_options
+    from keep.config import Settings
+    from keep.db import Database
+    from keep.service_clients import elasticsearch_options
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binding", type=Path, required=True)

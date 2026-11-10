@@ -1,8 +1,8 @@
-# appchi-indexer
+# keep-indexer
 
 Current-alert Elasticsearch projection, PostgreSQL reconciliation and index rebuild operations.
 
-See [system design](https://github.com/appchi-alert-operations/appchi-design), [workspace setup](https://github.com/appchi-alert-operations/appchi-delivery) and [source provenance](SOURCE.md).
+See [system design](https://github.com/keep-alert-operations/keep-design), [workspace setup](https://github.com/keep-alert-operations/keep-delivery) and [source provenance](SOURCE.md).
 
 ## Development
 
@@ -17,14 +17,14 @@ poetry run pytest
 poetry build --format wheel
 ```
 
-Shared `appchi` modules use namespace packaging; each module has exactly one owning
+Shared `keep` modules use namespace packaging; each module has exactly one owning
 distribution. Dependencies resolve immutable Git revisions in Python dependency metadata and `poetry.lock`.
 For coordinated local edits use the delivery workspace setup, which installs local
 packages without changing release dependency pins.
 
 ## Execution
 
-`poetry run appchi-indexer` is the entrypoint. Supply the documented environment
+`poetry run keep-indexer` is the entrypoint. Supply the documented environment
 bindings; package installation does not start services or migrate data.
 
 ## Projection capacity and scan ownership
@@ -94,7 +94,7 @@ no reconciliation row and runs no claim transaction. Due work still takes the
 writer lease, so paused or rebound writers stay fenced on every turn. Kafka hints
 are unaffected: the consumer's bounded poll keeps running each loop. Waiting
 until the scan's next due time (at most one second) during a Kafka outage needs
-the appchi-domain worker loop revision from appchi-alert-operations/appchi-domain#10;
+the keep-domain worker loop revision from keep-alert-operations/keep-domain#10;
 until this repository pins it, an outage retries the transport every 10
 milliseconds, but the idle scan itself still issues no statement until due.
 
@@ -105,14 +105,14 @@ fence requiring explicit repair and restart, with no automatic offset skip.
 
 ## Initial search activation for an isolated development cluster
 
-The explicit `appchi.search.bootstrap` command enables a **fresh development
+The explicit `keep.search.bootstrap` command enables a **fresh development
 search projection** for diagnostics such as a private OpenShift load test. It is
 not a restore command or production qualification. The existing
-`appchi.search.local_bootstrap` remains restricted to its fixed loopback database
+`keep.search.local_bootstrap` remains restricted to its fixed loopback database
 and alias; none of its isolation checks are relaxed.
 
 Run the dedicated PostgreSQL migration job first. Keep ingestion and all writers
-stopped until this command succeeds. Use the normal `appchi_worker` database
+stopped until this command succeeds. Use the normal `keep_worker` database
 identity with the migration-granted permissions, not a database administrator.
 Do not grant extra restore privileges. This command never runs migrations.
 
@@ -120,17 +120,17 @@ Supply the regular indexer `Settings` environment, including:
 
 | Setting | Requirement |
 | --- | --- |
-| `APPCHI_ENVIRONMENT` | Exactly `development`. |
-| `APPCHI_ROLE` | Exactly `indexer`. |
-| `APPCHI_DEPLOYMENT_EPOCH` | Same deployment epoch as the cluster's runtime services. |
-| `APPCHI_DATABASE_URL` | The isolated, migrated Appchi database using the worker identity and the required PostgreSQL TLS parameters. |
-| `APPCHI_WRAPPING_KEY` or `APPCHI_WRAPPING_KEYRING` | The existing valid runtime key configuration required by `Settings`. Do not generate a different key for each retry. |
-| `APPCHI_ELASTICSEARCH_URL` | HTTPS root origin, without user information, path prefix, query or fragment. |
-| `APPCHI_ELASTICSEARCH_INDEX` | Exact serving alias from the binding below. |
-| `APPCHI_ELASTICSEARCH_API_KEY` | Target-scoped credential, if required by supplied Elasticsearch. |
-| `APPCHI_ELASTICSEARCH_CA_FILE` | Mounted private CA bundle when the target uses a private issuer. TLS verification remains enabled. |
-| `APPCHI_ELASTICSEARCH_CLIENT_CERT` / `APPCHI_ELASTICSEARCH_CLIENT_KEY` | Existing optional mutual-TLS settings, supplied together. |
-| `APPCHI_CLOCK_HEALTH_FILE` / `APPCHI_DATABASE_CLOCK_HEALTH_FILE` | Both owner-published clock evidence files, using the ordinary runtime format. They must remain fresh through final activation. |
+| `KEEP_ENVIRONMENT` | Exactly `development`. |
+| `KEEP_ROLE` | Exactly `indexer`. |
+| `KEEP_DEPLOYMENT_EPOCH` | Same deployment epoch as the cluster's runtime services. |
+| `KEEP_DATABASE_URL` | The isolated, migrated Keep database using the worker identity and the required PostgreSQL TLS parameters. |
+| `KEEP_WRAPPING_KEY` or `KEEP_WRAPPING_KEYRING` | The existing valid runtime key configuration required by `Settings`. Do not generate a different key for each retry. |
+| `KEEP_ELASTICSEARCH_URL` | HTTPS root origin, without user information, path prefix, query or fragment. |
+| `KEEP_ELASTICSEARCH_INDEX` | Exact serving alias from the binding below. |
+| `KEEP_ELASTICSEARCH_API_KEY` | Target-scoped credential, if required by supplied Elasticsearch. |
+| `KEEP_ELASTICSEARCH_CA_FILE` | Mounted private CA bundle when the target uses a private issuer. TLS verification remains enabled. |
+| `KEEP_ELASTICSEARCH_CLIENT_CERT` / `KEEP_ELASTICSEARCH_CLIENT_KEY` | Existing optional mutual-TLS settings, supplied together. |
+| `KEEP_CLOCK_HEALTH_FILE` / `KEEP_DATABASE_CLOCK_HEALTH_FILE` | Both owner-published clock evidence files, using the ordinary runtime format. They must remain fresh through final activation. |
 
 Clock evidence is checked by the existing clock validator: synchronized `true`,
 finite offset within one second, and `measured_at` no more than 60 seconds old.
@@ -144,9 +144,9 @@ sizing:
 
 ```json
 {
-  "profile": "appchi-es-rebuild-v1",
-  "alias": "appchi-loadtest-alerts",
-  "index_prefix": "appchi-loadtest-alerts-",
+  "profile": "keep-es-rebuild-v1",
+  "alias": "keep-loadtest-alerts",
+  "index_prefix": "keep-loadtest-alerts-",
   "capability_evidence": "YOUR-SUPPLIED-INTEGRATION-REFERENCE",
   "atomic_alias_switch": true,
   "exclusive_alias_writer": true,
@@ -168,9 +168,9 @@ Choose and retain one physical index name under `index_prefix`, one UUID index
 epoch, and one nonblank operation reference (at most 200 characters). For example:
 
 ```sh
-python -m appchi.search.bootstrap \
-  --binding /etc/appchi/bootstrap/search-binding.json \
-  --physical-index appchi-loadtest-alerts-initial \
+python -m keep.search.bootstrap \
+  --binding /etc/keep/bootstrap/search-binding.json \
+  --physical-index keep-loadtest-alerts-initial \
   --index-epoch YOUR-LOWERCASE-UUID \
   --operation-reference YOUR-LOADTEST-RUN-REFERENCE \
   --ingestion-and-writers-stopped
@@ -226,19 +226,19 @@ pass. Errors return a sanitized code and a nonzero exit status.
 
 The ordinary unit suite covers configuration, clock, mapping and lock failure
 guards. Opt-in integration tests create/drop **new random databases** and random
-Elasticsearch namespaces, exercising actual `appchi_worker` privileges, live
+Elasticsearch namespaces, exercising actual `keep_worker` privileges, live
 probes, crash retry, restore fences and concurrent writes:
 
 ```sh
 # Inject these privately, never commit their values:
-# APPCHI_BOOTSTRAP_TEST_POSTGRES_ADMIN_DSN (isolated server, CREATE DATABASE)
-# APPCHI_TEST_ELASTICSEARCH_URL (isolated HTTPS service)
-# APPCHI_TEST_ELASTICSEARCH_CA (optional trusted private CA path)
-# APPCHI_TEST_ELASTICSEARCH_API_KEY (optional isolated test credential)
+# KEEP_BOOTSTRAP_TEST_POSTGRES_ADMIN_DSN (isolated server, CREATE DATABASE)
+# KEEP_TEST_ELASTICSEARCH_URL (isolated HTTPS service)
+# KEEP_TEST_ELASTICSEARCH_CA (optional trusted private CA path)
+# KEEP_TEST_ELASTICSEARCH_API_KEY (optional isolated test credential)
 python -m pytest tests/integration/test_search_bootstrap_integration.py -q
 ```
 
 The integration environment also needs the separately installed
-`appchi-migrations` package; the coordinated delivery development environment
+`keep-migrations` package; the coordinated delivery development environment
 provides it. These fixture migrations run only in their freshly created test
 databases. They are not part of runtime or bootstrap startup.

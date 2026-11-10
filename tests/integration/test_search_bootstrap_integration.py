@@ -15,28 +15,28 @@ from psycopg.conninfo import make_conninfo
 from psycopg import sql
 import pytest
 
-from appchi.db import Database
-from appchi.recovery.guard import RESTORE_LOCK
-from appchi.search import bootstrap as command
-from appchi.search.bootstrap_probe import owned_mapping
-from appchi.search.projection import index_mapping
-from appchi.search.rebuild import HOLD_LOCK, RebuildBinding, alias_target, start_rebuild
-from appchi.shared.errors import AppError
+from keep.db import Database
+from keep.recovery.guard import RESTORE_LOCK
+from keep.search import bootstrap as command
+from keep.search.bootstrap_probe import owned_mapping
+from keep.search.projection import index_mapping
+from keep.search.rebuild import HOLD_LOCK, RebuildBinding, alias_target, start_rebuild
+from keep.shared.errors import AppError
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def system(tmp_path):
-    admin_dsn = os.environ.get("APPCHI_BOOTSTRAP_TEST_POSTGRES_ADMIN_DSN")
-    endpoint = os.environ.get("APPCHI_TEST_ELASTICSEARCH_URL")
+    admin_dsn = os.environ.get("KEEP_BOOTSTRAP_TEST_POSTGRES_ADMIN_DSN")
+    endpoint = os.environ.get("KEEP_TEST_ELASTICSEARCH_URL")
     if not admin_dsn or not endpoint:
         pytest.skip("Requires explicit disposable-database admin DSN and isolated Elasticsearch")
     admin_dsn = make_conninfo(admin_dsn, connect_timeout=5)
-    from appchi.migrate import migrate, migration_directory
+    from keep.migrate import migrate, migration_directory
 
     name = "bootstrap_test_" + uuid4().hex
-    prefix = "appchi-bootstrap-test-" + uuid4().hex + "-"
+    prefix = "keep-bootstrap-test-" + uuid4().hex + "-"
     with psycopg.connect(admin_dsn, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     dsn = make_conninfo(admin_dsn, dbname=name)
@@ -44,14 +44,14 @@ def system(tmp_path):
     try:
         migrate(dsn, migration_directory())
         # Run the operation with actual runtime privileges, not database owner privileges.
-        db = Database(make_conninfo(dsn, options="-c role=appchi_worker"), 2)
+        db = Database(make_conninfo(dsn, options="-c role=keep_worker"), 2)
         # TLS connection setup on a constrained workstation can exceed the
         # runtime pool's 3s checkout budget. Warm it without changing that budget.
         with db.pool.connection(timeout=15) as conn:
-            assert conn.execute("SELECT current_user").fetchone()["current_user"] == "appchi_worker"
+            assert conn.execute("SELECT current_user").fetchone()["current_user"] == "keep_worker"
             conn.commit()
-        ca = os.environ.get("APPCHI_TEST_ELASTICSEARCH_CA")
-        api_key = os.environ.get("APPCHI_TEST_ELASTICSEARCH_API_KEY")
+        ca = os.environ.get("KEEP_TEST_ELASTICSEARCH_CA")
+        api_key = os.environ.get("KEEP_TEST_ELASTICSEARCH_API_KEY")
         client = Elasticsearch(
             endpoint,
             request_timeout=10,
@@ -155,30 +155,30 @@ def test_standalone_cli_activates_with_real_settings(system, tmp_path):
             }
         )
     )
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("APPCHI_")}
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("KEEP_")}
     environment.update(
         {
-            "APPCHI_ENVIRONMENT": "development",
-            "APPCHI_ROLE": "indexer",
-            "APPCHI_DEPLOYMENT_EPOCH": system.settings.deployment_epoch,
-            "APPCHI_DATABASE_URL": make_conninfo(system.dsn, options="-c role=appchi_worker"),
-            "APPCHI_WRAPPING_KEY": base64.b64encode(b"test" * 8).decode(),
-            "APPCHI_ELASTICSEARCH_URL": system.settings.elasticsearch_url,
-            "APPCHI_ELASTICSEARCH_INDEX": system.binding.alias,
-            "APPCHI_CLOCK_HEALTH_FILE": str(system.settings.clock_health_file.resolve()),
-            "APPCHI_DATABASE_CLOCK_HEALTH_FILE": str(
+            "KEEP_ENVIRONMENT": "development",
+            "KEEP_ROLE": "indexer",
+            "KEEP_DEPLOYMENT_EPOCH": system.settings.deployment_epoch,
+            "KEEP_DATABASE_URL": make_conninfo(system.dsn, options="-c role=keep_worker"),
+            "KEEP_WRAPPING_KEY": base64.b64encode(b"test" * 8).decode(),
+            "KEEP_ELASTICSEARCH_URL": system.settings.elasticsearch_url,
+            "KEEP_ELASTICSEARCH_INDEX": system.binding.alias,
+            "KEEP_CLOCK_HEALTH_FILE": str(system.settings.clock_health_file.resolve()),
+            "KEEP_DATABASE_CLOCK_HEALTH_FILE": str(
                 system.settings.database_clock_health_file.resolve()
             ),
         }
     )
     for suffix in ("CA", "API_KEY"):
-        if value := os.environ.get("APPCHI_TEST_ELASTICSEARCH_" + suffix):
-            environment["APPCHI_ELASTICSEARCH_" + ("CA_FILE" if suffix == "CA" else suffix)] = value
+        if value := os.environ.get("KEEP_TEST_ELASTICSEARCH_" + suffix):
+            environment["KEEP_ELASTICSEARCH_" + ("CA_FILE" if suffix == "CA" else suffix)] = value
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
-            "appchi.search.bootstrap",
+            "keep.search.bootstrap",
             "--binding",
             str(binding_path),
             "--physical-index",

@@ -7,19 +7,19 @@ import threading
 
 from elasticsearch import Elasticsearch
 
-from appchi.config import Settings
-from appchi.db import Database
-from appchi.search.rebuild import (
+from keep.config import Settings
+from keep.db import Database
+from keep.search.rebuild import (
     RebuildBinding,
     bind_serving_index,
     start_rebuild,
     rebuild_turn,
     cancel_rebuild,
 )
-from appchi.service_clients import elasticsearch_options
-from appchi.shared.errors import AppError
-from appchi.serialization import wire
-from appchi.worker_health import WorkerHealth
+from keep.service_clients import elasticsearch_options
+from keep.shared.errors import AppError
+from keep.serialization import wire
+from keep.worker_health import WorkerHealth
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
         binding = RebuildBinding.model_validate_json(args.binding.read_text(encoding="utf-8"))
         if binding.alias != settings.elasticsearch_index or not settings.elasticsearch_url:
             parser.error(
-                "The binding alias must match APPCHI_ELASTICSEARCH_INDEX and a URL is required"
+                "The binding alias must match KEEP_ELASTICSEARCH_INDEX and a URL is required"
             )
         db = Database(
             settings.database_url.get_secret_value(),

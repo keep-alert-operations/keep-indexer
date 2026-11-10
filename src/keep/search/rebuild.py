@@ -10,23 +10,23 @@ from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator
 
-from appchi.models import StrictModel
-from appchi.search.projection import (
+from keep.models import StrictModel
+from keep.search.projection import (
     Projection,
     build_document,
     canonical,
     index_mapping,
     assert_complete,
 )
-from appchi.search.writer import ProjectionWriter
-from appchi.shared.errors import AppError, unavailable
+from keep.search.writer import ProjectionWriter
+from keep.shared.errors import AppError, unavailable
 
 HOLD_LOCK = 713411725
 PAGE_SIZE = 100
 
 
 class RebuildBinding(StrictModel):
-    profile: Literal["appchi-es-rebuild-v1"] = "appchi-es-rebuild-v1"
+    profile: Literal["keep-es-rebuild-v1"] = "keep-es-rebuild-v1"
     alias: str = Field(min_length=1, max_length=200)
     index_prefix: str = Field(min_length=1, max_length=160)
     capability_evidence: str = Field(min_length=1, max_length=1000)

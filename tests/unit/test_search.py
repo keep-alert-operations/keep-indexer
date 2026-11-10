@@ -4,12 +4,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from appchi.cel import compile_expression
-from appchi.search import Projection, SearchReader, SearchScope, SearchState, build_document, index_mapping
-from appchi.search.writer import ProjectionWriter
-from appchi.search.reader import sort_spec
-from appchi.search.text import query_tokens, source_tokens
-from appchi.shared.errors import AppError
+from keep.cel import compile_expression
+from keep.search import Projection, SearchReader, SearchScope, SearchState, build_document, index_mapping
+from keep.search.writer import ProjectionWriter
+from keep.search.reader import sort_spec
+from keep.search.text import query_tokens, source_tokens
+from keep.shared.errors import AppError
 
 NOW = datetime(2026, 9, 22, 12, tzinfo=timezone.utc)
 

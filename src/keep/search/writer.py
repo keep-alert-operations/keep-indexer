@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Callable
-from appchi.shared.errors import AppError, unavailable
+from keep.shared.errors import AppError, unavailable
 
 from .projection import Projection, VisibilityProof, build_document, assert_complete, canonical
 

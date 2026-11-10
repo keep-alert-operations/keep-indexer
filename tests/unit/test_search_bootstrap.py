@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from appchi.search.bootstrap import _empty_index, exclusive_operation, validate
-from appchi.search.bootstrap_probe import owned_mapping, target_identity, verify_mapping
-from appchi.search.rebuild import RebuildBinding
-from appchi.shared.errors import AppError
+from keep.search.bootstrap import _empty_index, exclusive_operation, validate
+from keep.search.bootstrap_probe import owned_mapping, target_identity, verify_mapping
+from keep.search.rebuild import RebuildBinding
+from keep.shared.errors import AppError
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def config(tmp_path):
         environment="development",
         role="indexer",
         elasticsearch_url="https://es.example.invalid:9200",
-        elasticsearch_index="appchi-test-alerts",
+        elasticsearch_index="keep-test-alerts",
         clock_health_file=evidence,
         database_clock_health_file=evidence,
     )
@@ -38,8 +38,8 @@ def config(tmp_path):
 @pytest.fixture
 def binding():
     return RebuildBinding(
-        alias="appchi-test-alerts",
-        index_prefix="appchi-test-",
+        alias="keep-test-alerts",
+        index_prefix="keep-test-",
         capability_evidence="operator integration reference",
         atomic_alias_switch=True,
         exclusive_alias_writer=True,
@@ -49,7 +49,7 @@ def binding():
 
 
 def test_valid_explicit_configuration(config, binding):
-    validate(config, binding, "appchi-test-serving", str(uuid4()), "run-1", True)
+    validate(config, binding, "keep-test-serving", str(uuid4()), "run-1", True)
 
 
 @pytest.mark.parametrize(
@@ -71,17 +71,17 @@ def test_rejects_unsafe_configuration(config, binding, changes):
     for key, value in changes.items():
         setattr(config, key, value)
     with pytest.raises(AppError):
-        validate(config, binding, "appchi-test-serving", str(uuid4()), "run-1", True)
+        validate(config, binding, "keep-test-serving", str(uuid4()), "run-1", True)
 
 
 @pytest.mark.parametrize(
     "physical,reference,stopped",
     [
         ("foreign-index", "ref", True),
-        ("appchi-test-*", "ref", True),
-        ("appchi-test-alerts", "ref", True),
-        ("appchi-test-serving", " ", True),
-        ("appchi-test-serving", "ref", False),
+        ("keep-test-*", "ref", True),
+        ("keep-test-alerts", "ref", True),
+        ("keep-test-serving", " ", True),
+        ("keep-test-serving", "ref", False),
     ],
 )
 def test_requires_exact_names_reference_and_attestation(
@@ -105,7 +105,7 @@ def test_requires_supported_explicit_index_settings(config, binding, options):
         validate(
             config,
             binding.model_copy(update={"index_settings": options}),
-            "appchi-test-serving",
+            "keep-test-serving",
             str(uuid4()),
             "ref",
             True,
@@ -123,7 +123,7 @@ def test_stale_clock_is_not_an_integration_success_flag(config, binding):
         )
     )
     with pytest.raises(AppError, match="clock_untrusted"):
-        validate(config, binding, "appchi-test-serving", str(uuid4()), "ref", True)
+        validate(config, binding, "keep-test-serving", str(uuid4()), "ref", True)
 
 
 def test_mapping_checks_include_ownership_source_filters_and_extra_fields():
