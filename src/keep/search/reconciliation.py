@@ -603,7 +603,9 @@ class ProjectionService:
                 )
                 or []
             )
-            return {(item.tenant_id, item.alert_id) for item in published}
+            # What the last call made visible, for the per-alert log records.
+            self.projected = {(item.tenant_id, item.alert_id): item for item in published}
+            return set(self.projected)
 
     # Monotonic time before which no tenant can be due; 0 means check now.
     idle_until = 0.0

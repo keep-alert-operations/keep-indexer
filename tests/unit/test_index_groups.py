@@ -20,14 +20,19 @@ def hint(tenant, alert, *, key=None, value=None):
         ).encode()
     )
     return SimpleNamespace(
-        value=lambda: body, key=lambda: key if key is not None else UUID(str(tenant)).bytes
+        value=lambda: body,
+        key=lambda: key if key is not None else UUID(str(tenant)).bytes,
+        partition=lambda: 0,
+        offset=lambda: 0,
     )
 
 
 class Envelope:
     @staticmethod
     def model_validate(data):
-        return SimpleNamespace(tenant_id=data["tenant_id"], alert_id=data["alert_id"])
+        return SimpleNamespace(
+            tenant_id=data["tenant_id"], alert_id=data["alert_id"], event_id=data["event_id"]
+        )
 
 
 def service(monkeypatch, covered=None):
